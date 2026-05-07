@@ -1,0 +1,563 @@
+Index: app.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from __future__ import annotations\r\n\r\nimport csv\r\nimport json\r\nimport os\r\nfrom datetime import datetime\r\nfrom pathlib import Path\r\nfrom uuid import uuid4\r\n\r\nfrom nicegui import app, ui\r\n\r\nfrom src.data import (\r\n    BREAKFASTS, CARBS, FATS, MILKS_PER_100ML, PROTEINS, SELF_PROTEINS, SELF_RICE,\r\n    SELF_SAUCE, SELF_VEG, SNACKS, SPORT_EXTRAS, TARGETS, PROFILES, Macros, Target,\r\n)\r\nfrom src.nutrition import add_macros, export_dict, scale_macros, status_for\r\nfrom src.recommendations import daily_comment, dinner_advice, tomorrow_suggestion, warnings\r\n\r\nBASE_DIR = Path(__file__).resolve().parent\r\nEXPORT_DIR = BASE_DIR / 'exports'\r\nEXPORT_DIR.mkdir(exist_ok=True)\r\napp.add_static_files('/exports', str(EXPORT_DIR))\r\n\r\nAPP_PASSWORD = os.environ.get('APP_PASSWORD', '').strip()\r\nNICEGUI_STORAGE_SECRET = os.environ.get('NICEGUI_STORAGE_SECRET', 'dev-secret-change-me')\r\nPORT = int(os.environ.get('PORT', '8080'))\r\n\r\nui.add_head_html('''\r\n<style>\r\n:root{--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--soft:#f8fafc;--blue:#2563eb;--green:#16a34a;--amber:#f59e0b;--red:#dc2626;--good:#dcfce7;--warn:#fef3c7;--bad:#fee2e2;}\r\nbody{background:#f5f7fb;color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.nicegui-content{padding:0!important}.app-shell{min-height:100vh;display:grid;grid-template-columns:280px 1fr}.sidebar{background:linear-gradient(180deg,#08111f,#172033);color:white;padding:28px 20px}.brand{font-size:24px;font-weight:900;letter-spacing:-.04em}.brand-sub{color:#b8c2d6;font-size:13px;line-height:1.45;margin:8px 0 28px}.nav-link{width:100%;padding:13px 14px;border-radius:14px;color:#dbe5f7;text-decoration:none;display:block;margin-bottom:8px;font-weight:750}.nav-link:hover{background:rgba(255,255,255,.10)}.nav-active{background:white;color:#111827;box-shadow:0 12px 30px rgba(0,0,0,.18)}.main{padding:36px 48px 70px;max-width:1280px;width:100%}.hero{margin-bottom:24px}.h1{font-size:40px;font-weight:900;letter-spacing:-.05em;line-height:1.05;margin:0}.subtitle{font-size:15px;color:var(--muted);margin-top:10px;max-width:740px;line-height:1.55}.card{background:white;border:1px solid var(--line);border-radius:24px;padding:22px;box-shadow:0 16px 40px rgba(15,23,42,.055);margin-bottom:18px}.section-title{font-size:21px;font-weight:850;letter-spacing:-.03em;margin:0 0 14px}.small{color:var(--muted);font-size:13px;line-height:1.45}.metric-grid{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:16px}.metric{background:#fff;border:1px solid var(--line);border-radius:20px;padding:18px}.metric-label{color:var(--muted);font-size:13px;font-weight:750}.metric-value{font-size:34px;font-weight:900;letter-spacing:-.05em;margin-top:4px}.range-wrap{margin:18px 0 24px}.range-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline;margin-bottom:8px}.range-title{font-weight:850}.range-note{color:var(--muted);font-size:13px}.range-track{height:18px;background:#edf2f7;border-radius:999px;position:relative;overflow:hidden}.range-zone{height:18px;position:absolute;top:0;border-radius:999px}.range-fill{height:18px;position:absolute;left:0;top:0;border-radius:999px}.range-mid{width:3px;height:22px;background:#0f172a;position:absolute;top:-2px;border-radius:2px;opacity:.7}.range-labels{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-top:6px}.status-ok .range-zone{background:#bbf7d0}.status-ok .range-fill{background:#16a34a}.status-warn .range-zone{background:#fde68a}.status-warn .range-fill{background:#f59e0b}.status-bad .range-zone{background:#fecaca}.status-bad .range-fill{background:#dc2626}.pill{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:800}.pill-ok{background:var(--good);color:#166534}.pill-warn{background:var(--warn);color:#92400e}.pill-bad{background:var(--bad);color:#991b1b}.box{padding:14px 16px;border-radius:16px;margin:8px 0;border:1px solid}.box-ok{background:#f0fdf4;border-color:#bbf7d0;color:#166534}.box-warn{background:#fffbeb;border-color:#fde68a;color:#92400e}.box-bad{background:#fef2f2;border-color:#fecaca;color:#991b1b}.box-info{background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a}.q-field--outlined .q-field__control{border-radius:14px!important;background:#f8fafc}@media(max-width:900px){.app-shell{grid-template-columns:1fr}.main{padding:26px 18px}.metric-grid{grid-template-columns:1fr 1fr}.h1{font-size:34px}}\r\n</style>\r\n''', shared=True)\r\n\r\ndef profile_cfg() -> dict:\r\n    return PROFILES[state['profile']]\r\n\r\n\r\ndef targets() -> dict[str, Target]:\r\n    return profile_cfg()['targets']\r\n\r\n\r\ndef proteins() -> dict[str, Macros]:\r\n    return profile_cfg()['proteins']\r\n\r\n\r\ndef carbs() -> dict[str, Macros]:\r\n    return profile_cfg()['carbs']\r\n\r\n\r\ndef fats() -> dict[str, Macros]:\r\n    return profile_cfg()['fats']\r\n\r\n\r\ndef breakfasts() -> dict[str, Macros]:\r\n    return profile_cfg()['breakfasts']\r\n\r\n\r\ndef snacks() -> dict[str, Macros]:\r\n    return profile_cfg()['snacks']\r\n\r\n\r\ndef sports_catalog() -> dict[str, Macros]:\r\n    return profile_cfg()['sports']\r\n\r\n\r\ndef movement_cfg() -> dict:\r\n    return profile_cfg()['default_movement']\r\n\r\n\r\ndef uses_self() -> bool:\r\n    return bool(profile_cfg().get('uses_self', True))\r\n\r\n\r\ndef uses_shaker() -> bool:\r\n    return bool(profile_cfg().get('uses_shaker', True))\r\n\r\n\r\ndef uses_coffee() -> bool:\r\n    return bool(profile_cfg().get('uses_coffee', True))\r\n\r\n\r\ndef custom_state():\r\n    return {'name': '', 'protein': 0.0, 'carbs': 0.0, 'fat': 0.0, 'kcal': 0.0}\r\n\r\nstate = {\r\n    'profile': 'Liêm',\r\n    'day': 'Muscu',\r\n    'movement_active': True, 'movement_amount': 4.0,\r\n    'sports': [],\r\n    'self': False, 'self_protein': list(SELF_PROTEINS)[0], 'self_rice': list(SELF_RICE)[0], 'self_veg': list(SELF_VEG)[0], 'self_sauce': list(SELF_SAUCE)[0], 'self_custom': custom_state(),\r\n    'breakfast': 'Aucun', 'breakfast_custom': custom_state(),\r\n    'coffee_count': 0, 'coffee_milk_ml': 60,\r\n    'snacks': [],\r\n    'shaker': False, 'shaker_ml': 250, 'shaker_custom': custom_state(),\r\n    'meals': {'Déjeuner': [], 'Dîner': []},\r\n    'custom': custom_state(),\r\n}\r\n\r\n\r\ndef refresh(): ui.navigate.reload()\r\ndef setv(key, value): state[key] = value; refresh()\r\n\r\ndef set_profile(name: str):\r\n    state['profile'] = name\r\n    cfg = PROFILES[name]\r\n    state['day'] = cfg['default_day']\r\n    state['movement_active'] = True\r\n    state['movement_amount'] = cfg['default_movement']['default']\r\n    state['sports'] = []\r\n    state['breakfast'] = 'Aucun'\r\n    state['self'] = False\r\n    state['shaker'] = False\r\n    state['coffee_count'] = 0\r\n    state['snacks'] = []\r\n    for meal in state['meals'].values():\r\n        meal.clear()\r\n    refresh()\r\n\r\ndef safe_choice(options: list[str], value: str) -> str:\r\n    return value if value in options else options[0]\r\n\r\ndef custom_macros(d: dict) -> Macros:\r\n    kcal = d.get('kcal') or None\r\n    return Macros(float(d.get('protein') or 0), float(d.get('carbs') or 0), float(d.get('fat') or 0), kcal)\r\n\r\ndef macro_from_select(source: dict[str, Macros], name: str, portions: float = 1.0) -> Macros:\r\n    return scale_macros(source.get(name, Macros()), portions)\r\n\r\ndef coffee_macros() -> Macros:\r\n    if not uses_coffee():\r\n        return Macros()\r\n    return scale_macros(MILKS_PER_100ML['Lait demi-écrémé'], state['coffee_count'] * state['coffee_milk_ml'] / 100)\r\n\r\ndef shaker_macros() -> Macros:\r\n    if not uses_shaker():\r\n        return Macros()\r\n    if not state['shaker']: return custom_macros(state['shaker_custom'])\r\n    whey = Macros(20, 2, 1.5, 100)\r\n    milk = scale_macros(MILKS_PER_100ML['Lait demi-écrémé'], state['shaker_ml'] / 100)\r\n    return add_macros([whey, milk, custom_macros(state['shaker_custom'])])\r\n\r\ndef self_macros() -> Macros:\r\n    if not uses_self():\r\n        return Macros()\r\n    if not state['self']: return custom_macros(state['self_custom'])\r\n    return add_macros([SELF_PROTEINS[state['self_protein']], SELF_RICE[state['self_rice']], SELF_VEG[state['self_veg']], SELF_SAUCE[state['self_sauce']], custom_macros(state['self_custom'])])\r\n\r\ndef breakfast_macros() -> Macros:\r\n    choice = safe_choice(list(breakfasts()), state['breakfast'])\r\n    state['breakfast'] = choice\r\n    return add_macros([breakfasts().get(choice, Macros()), custom_macros(state['breakfast_custom'])])\r\n\r\ndef snack_macros() -> Macros:\r\n    items: list[Macros] = []\r\n    for row in state['snacks']:\r\n        if row.get('name') == 'Autre goûter':\r\n            items.append(custom_macros(row['custom']))\r\n        else:\r\n            items.append(macro_from_select(snacks(), row.get('name', 'Aucun'), row.get('qty', 1.0)))\r\n    return add_macros(items)\r\n\r\n\r\ndef add_snack():\r\n    default = 'Bonbons crocodile — 30 g' if 'Bonbons crocodile — 30 g' in snacks() else [x for x in snacks() if x != 'Aucun'][0]\r\n    state['snacks'].append({'id': str(uuid4()), 'name': default, 'qty': 1.0, 'custom': custom_state()})\r\n    refresh()\r\n\r\n\r\ndef remove_snack(item_id: str):\r\n    state['snacks'] = [x for x in state['snacks'] if x['id'] != item_id]\r\n    refresh()\r\n\r\ndef ingredient_options(kind: str):\r\n    return {'Protéine': list(proteins()), 'Féculent': list(carbs()), 'Huile / sauce': list(fats())}[kind]\r\n\r\ndef meal_macros(title: str) -> Macros:\r\n    items: list[Macros] = []\r\n    for row in state['meals'][title]:\r\n        if row['kind'] == 'Protéine': items.append(macro_from_select(proteins(), row['name'], row['qty']))\r\n        elif row['kind'] == 'Féculent': items.append(macro_from_select(carbs(), row['name'], row['qty']))\r\n        elif row['kind'] == 'Huile / sauce': items.append(macro_from_select(fats(), row['name'], row['qty']))\r\n        elif row['kind'] == 'Autre': items.append(custom_macros(row['custom']))\r\n    return add_macros(items)\r\n\r\ndef total_macros(include_custom: bool = False) -> Macros:\r\n    items = [breakfast_macros(), coffee_macros(), self_macros(), meal_macros('Déjeuner') if (not uses_self() or not state['self']) else Macros(), meal_macros('Dîner'), snack_macros(), shaker_macros()]\r\n    if include_custom: items.append(custom_macros(state['custom']))\r\n    return add_macros(items)\r\n\r\ndef sport_row_extra(row: dict) -> Macros:\r\n    name = row.get('name', 'Aucun')\r\n    if name == 'Autre sport':\r\n        kcal = float(row.get('kcal') or 0)\r\n        return Macros(carbs=round(kcal / 7.0, 0), kcal=kcal)  # compensation simple, surtout en glucides\r\n    return sports_catalog().get(name, Macros())\r\n\r\n\r\ndef sports_extra() -> Macros:\r\n    return add_macros([sport_row_extra(row) for row in state['sports']])\r\n\r\n\r\ndef movement_extra() -> Macros:\r\n    cfg = movement_cfg()\r\n    actual = float(state['movement_amount'] or 0) if state.get('movement_active') else 0.0\r\n    diff = actual - float(cfg['default'])\r\n    kcal = diff * float(cfg['kcal_per_unit'])\r\n    return Macros(carbs=round(kcal / 7.0, 0), kcal=kcal)\r\n\r\n\r\ndef current_target() -> Target:\r\n    day_options = targets()\r\n    if state['day'] not in day_options:\r\n        state['day'] = profile_cfg()['default_day']\r\n    base = day_options[state['day']]\r\n    extra = add_macros([sports_extra(), movement_extra()])\r\n    return Target(base.protein, base.carbs + extra.carbs, base.fat, base.kcal + extra.energy())\r\n\r\n\r\ndef password_gate() -> bool:\r\n    \"\"\"Return True when the current browser session may access the app.\r\n\r\n    Locally, no password is required unless APP_PASSWORD is defined.\r\n    On Render, set APP_PASSWORD in Environment to protect the public URL.\r\n    \"\"\"\r\n    if not APP_PASSWORD:\r\n        return True\r\n    if app.storage.user.get('authenticated') is True:\r\n        return True\r\n\r\n    with ui.card().classes('card w-full').style('max-width:520px;margin:80px auto;'):\r\n        ui.label('Accès privé').classes('section-title')\r\n        ui.label('Entre le mot de passe configuré pour cette application.').classes('small')\r\n        password = ui.input('Mot de passe', password=True, password_toggle_button=True).classes('w-full mt-3')\r\n\r\n        def login() -> None:\r\n            if password.value == APP_PASSWORD:\r\n                app.storage.user['authenticated'] = True\r\n                ui.notify('Connexion réussie', color='positive')\r\n                refresh()\r\n            else:\r\n                ui.notify('Mot de passe incorrect', color='negative')\r\n\r\n        ui.button('Entrer', on_click=login).props('unelevated color=primary').classes('mt-3')\r\n    return False\r\n\r\n\r\ndef page_shell(active: str, render):\r\n    with ui.element('div').classes('app-shell'):\r\n        with ui.element('aside').classes('sidebar'):\r\n            ui.html('<div class=\"brand\">Meal Builder</div><div class=\"brand-sub\">Sèche / recomposition, simple et propre.</div>')\r\n            for label, url in [('Préparer','/'),('Compléter','/completer'),('Bilan','/bilan')]:\r\n                ui.link(label, url).classes('nav-link nav-active' if label == active else 'nav-link')\r\n            ui.separator().classes('my-5 opacity-30')\r\n            ui.label('Repères rapides').classes('text-sm text-blue-100 font-bold')\r\n            ui.label('1 portion protéine ≈ 30-35 g').classes('text-xs text-blue-200 mt-2')\r\n            ui.label('1 portion féculent ≈ 50 g glucides').classes('text-xs text-blue-200 mt-1')\r\n        with ui.element('main').classes('main'):\r\n            if password_gate():\r\n                render()\r\n\r\n\r\n\r\ndef profile_card():\r\n    cfg = profile_cfg()\r\n    mv = movement_cfg()\r\n    with ui.card().classes('card w-full'):\r\n        ui.label('Profil utilisé par l’app').classes('section-title')\r\n        ui.html(f\"\"\"\r\n        <div class=\"box box-info\" style=\"font-size:13px;line-height:1.55\">\r\n          <span style=\"font-weight:650\">{cfg['display_name']}</span> · {cfg['sex'].lower()}, {cfg['age']} ans · {cfg['height_cm']} cm · {cfg['weight_kg']} kg<br>\r\n          Objectif : {cfg['goal']}<br>\r\n          Métabolisme de base estimé : ≈ {cfg['bmr_kcal']} kcal/j. Déplacement par défaut : {mv['label'].lower()} {mv['default']:g} {mv['unit']}.\r\n        </div>\r\n        <div class=\"small mt-2\">Ces infos servent de contexte. Le poids varie naturellement : l’app suit surtout la cohérence des repas et des repères.</div>\r\n        \"\"\")\r\n\r\ndef serving_hint(name: str, qty: float) -> str:\r\n    import re\r\n    if name in {'Aucune', 'Aucun'}:\r\n        return ''\r\n    tail = name.split('—', 1)[1].strip() if '—' in name else name\r\n    grams = re.findall(r'(\\d+(?:[,.]\\d+)?)\\s*g\\b', tail, re.IGNORECASE)\r\n    if grams:\r\n        amount = float(grams[-1].replace(',', '.')) * qty\r\n        unit = 'g'\r\n    else:\r\n        m = re.search(r'(\\d+(?:[,.]\\d+)?)\\s*(ml|unité|unités|portion|paquet)', tail, re.IGNORECASE)\r\n        if not m:\r\n            return ''\r\n        amount = float(m.group(1).replace(',', '.')) * qty\r\n        unit = m.group(2)\r\n        if unit.lower().startswith('unité'):\r\n            unit = 'œuf(s)' if 'œuf' in name.lower() else 'unité(s)'\r\n        elif unit.lower() == 'paquet':\r\n            unit = 'paquet(s)'\r\n        elif unit.lower() == 'portion':\r\n            unit = 'portion(s)'\r\n    shown = f'{amount:.0f}' if abs(amount - round(amount)) < 0.01 else f'{amount:.1f}'\r\n    return f'Quantité utilisée : environ {shown} {unit}'\r\n\r\ndef custom_inputs(data: dict, prefix: str):\r\n    with ui.grid(columns=5).classes('w-full gap-3 mt-2'):\r\n        ui.input(label='Nom', value=data['name']).on_value_change(lambda e: (data.update({'name': e.value}), refresh()))\r\n        for key, label in [('protein','Protéines g'),('carbs','Glucides g'),('fat','Lipides g'),('kcal','Kcal optionnelles')]:\r\n            ui.number(label=label, value=data[key], min=0, step=1).on_value_change(lambda e, k=key: (data.update({k: float(e.value or 0)}), refresh()))\r\n\r\n\r\ndef add_sport():\r\n    state['sports'].append({'id': str(uuid4()), 'name': [x for x in sports_catalog() if x != 'Aucun'][0], 'kcal': 250})\r\n    refresh()\r\n\r\n\r\ndef remove_sport(item_id: str):\r\n    state['sports'] = [x for x in state['sports'] if x['id'] != item_id]\r\n    refresh()\r\n\r\n\r\ndef sports_controls():\r\n    ui.separator().classes('my-4')\r\n    with ui.row().classes('items-center justify-between w-full'):\r\n        ui.label('Sports en plus').classes('font-bold text-base')\r\n        ui.button('Ajouter un sport', icon='add', on_click=add_sport).props('unelevated color=primary')\r\n    if not state['sports']:\r\n        ui.label('Ajoute seulement les activités en plus de ta journée choisie. Exemple : une course le soir après une journée muscu.').classes('small mt-1')\r\n        return\r\n    sport_options = [x for x in sports_catalog() if x != 'Aucun']\r\n    for row in list(state['sports']):\r\n        with ui.row().classes('w-full items-end gap-3 mt-2'):\r\n            ui.select(sport_options, value=row.get('name', sport_options[0]), label='Sport ajouté').on_value_change(lambda e, r=row: (r.update({'name': e.value}), refresh())).classes('grow')\r\n            if row.get('name') == 'Autre sport':\r\n                ui.number(label='Dépense kcal', value=row.get('kcal', 250), min=0, max=2000, step=25).on_value_change(lambda e, r=row: (r.update({'kcal': float(e.value or 0)}), refresh())).classes('w-40')\r\n            extra = sport_row_extra(row)\r\n            ui.label(f'+{extra.energy():.0f} kcal · +{extra.carbs:.0f} g glucides').classes('small mb-3')\r\n            ui.button(icon='delete', on_click=lambda r=row: remove_sport(r['id'])).props('flat round color=negative')\r\n\r\n\r\ndef common_controls():\r\n    profile_card()\r\n    with ui.card().classes('card w-full'):\r\n        ui.label('Réglages du jour').classes('section-title')\r\n        cfg = movement_cfg()\r\n        with ui.grid(columns=2).classes('w-full gap-4'):\r\n            ui.select(list(PROFILES), value=state['profile'], label='Profil').on_value_change(lambda e: set_profile(e.value)).classes('w-full')\r\n            ui.select(list(targets()), value=safe_choice(list(targets()), state['day']), label='Type de journée').on_value_change(lambda e: setv('day', e.value)).classes('w-full')\r\n            if uses_coffee():\r\n                ui.number(label='Cafés au lait', value=state['coffee_count'], min=0, max=8, step=1).on_value_change(lambda e: setv('coffee_count', int(e.value or 0))).classes('w-full')\r\n            ui.switch(f\"{cfg['label']} par défaut\", value=state.get('movement_active', True)).on_value_change(lambda e: setv('movement_active', e.value))\r\n        if state.get('movement_active', True):\r\n            ui.number(label=f\"{cfg['label']} aujourd’hui ({cfg['unit']})\", value=state.get('movement_amount', cfg['default']), min=0, max=30, step=0.25).on_value_change(lambda e: setv('movement_amount', float(e.value or 0))).classes('w-80 mt-3')\r\n            ui.label(f\"Base du profil : {cfg['default']:g} {cfg['unit']}. Si tu changes cette valeur, les repères s’ajustent par rapport à cette base.\").classes('small mt-2')\r\n        else:\r\n            ui.label(f\"{cfg['label']} désactivé aujourd’hui : l’app retire l’équivalent de la base habituelle ({cfg['default']:g} {cfg['unit']}).\").classes('small mt-2')\r\n        if uses_coffee():\r\n            ui.label(f\"Café au lait : {state['coffee_milk_ml']} ml de lait demi-écrémé par café.\").classes('small mt-3')\r\n        sports_controls()\r\n\r\ndef self_controls():\r\n    if not uses_self():\r\n        return\r\n    with ui.card().classes('card w-full'):\r\n        with ui.row().classes('items-center justify-between w-full'):\r\n            ui.label('Self d’entreprise').classes('section-title')\r\n            ui.switch('Je mange au self', value=state['self']).on_value_change(lambda e: setv('self', e.value))\r\n        if state['self']:\r\n            with ui.grid(columns=4).classes('w-full gap-4'):\r\n                ui.select(list(SELF_PROTEINS), value=state['self_protein'], label='Protéine').on_value_change(lambda e: setv('self_protein', e.value))\r\n                ui.select(list(SELF_RICE), value=state['self_rice'], label='Riz').on_value_change(lambda e: setv('self_rice', e.value))\r\n                ui.select(list(SELF_VEG), value=state['self_veg'], label='Légumes').on_value_change(lambda e: setv('self_veg', e.value))\r\n                ui.select(list(SELF_SAUCE), value=state['self_sauce'], label='Sauce').on_value_change(lambda e: setv('self_sauce', e.value))\r\n            ui.html('<div class=\"box box-info mt-3\">Astuce : sauce à part ou petite louche. Si légumes très huileux, garde le dîner plus maigre.</div>')\r\n        ui.label('Autre chose au déjeuner / self').classes('small mt-3')\r\n        custom_inputs(state['self_custom'], 'self_custom')\r\n\r\n\r\ndef add_ingredient(meal: str):\r\n    state['meals'][meal].append({'id': str(uuid4()), 'kind': 'Protéine', 'name': list(proteins())[1], 'qty': 1.0, 'custom': custom_state()})\r\n    refresh()\r\n\r\ndef remove_ingredient(meal: str, item_id: str):\r\n    state['meals'][meal] = [x for x in state['meals'][meal] if x['id'] != item_id]\r\n    refresh()\r\n\r\ndef meal_card(title: str):\r\n    with ui.card().classes('card w-full'):\r\n        with ui.row().classes('items-center justify-between w-full'):\r\n            ui.label(title).classes('section-title')\r\n            ui.button('Ajouter un ingrédient', icon='add', on_click=lambda: add_ingredient(title)).props('unelevated color=primary')\r\n        if not state['meals'][title]:\r\n            ui.label('Exemple : filet de poulet + 2 œufs + riz. Les légumes maison restent libres par simplicité.').classes('small')\r\n        for item in list(state['meals'][title]):\r\n            with ui.row().classes('w-full items-end gap-3'):\r\n                def update_kind(e, it=item):\r\n                    it['kind'] = e.value\r\n                    if e.value != 'Autre': it['name'] = ingredient_options(e.value)[1 if e.value != 'Huile / sauce' else 0]\r\n                    refresh()\r\n                ui.select(['Protéine','Féculent','Huile / sauce','Autre'], value=item['kind'], label='Type').on_value_change(update_kind).classes('w-44')\r\n                if item['kind'] == 'Autre':\r\n                    ui.input(label='Nom', value=item['custom']['name']).on_value_change(lambda e, it=item: (it['custom'].update({'name': e.value}), refresh())).classes('w-52')\r\n                    for key, lab in [('protein','Prot. g'),('carbs','Gluc. g'),('fat','Lip. g')]:\r\n                        ui.number(label=lab, value=item['custom'][key], min=0, step=1).on_value_change(lambda e, it=item, k=key: (it['custom'].update({k: float(e.value or 0)}), refresh())).classes('w-28')\r\n                    ui.number(label='Kcal', value=item['custom']['kcal'], min=0, step=10).on_value_change(lambda e, it=item: (it['custom'].update({'kcal': float(e.value or 0)}), refresh())).classes('w-28')\r\n                else:\r\n                    ui.select(ingredient_options(item['kind']), value=item['name'], label='Ingrédient').on_value_change(lambda e, it=item: (it.update({'name': e.value}), refresh())).classes('grow')\r\n                    ui.number(label='Portions', value=item['qty'], min=0, max=8, step=0.25, format='%.2f').on_value_change(lambda e, it=item: (it.update({'qty': float(e.value or 0)}), refresh())).classes('w-32')\r\n                ui.button(icon='delete', on_click=lambda it=item: remove_ingredient(title, it['id'])).props('flat round color=negative')\r\n            if item['kind'] != 'Autre':\r\n                hint = serving_hint(item['name'], float(item.get('qty') or 0))\r\n                if hint:\r\n                    ui.label(hint).classes('small -mt-2 mb-2')\r\n        m = meal_macros(title)\r\n        ui.label(f'Total {title.lower()} : {m.protein:g} g protéines · {m.carbs:g} g glucides · {m.fat:g} g lipides · {m.energy():.0f} kcal').classes('small mt-3')\r\n\r\n\r\ndef extras_card():\r\n    with ui.card().classes('card w-full'):\r\n        ui.label('Petit-déj, goûters et shaker').classes('section-title')\r\n        with ui.grid(columns=2).classes('w-full gap-4'):\r\n            ui.select(list(breakfasts()), value=safe_choice(list(breakfasts()), state['breakfast']), label='Petit-déj').on_value_change(lambda e: setv('breakfast', e.value))\r\n            if uses_shaker():\r\n                ui.switch('Shaker whey', value=state['shaker']).on_value_change(lambda e: setv('shaker', e.value))\r\n        if safe_choice(list(breakfasts()), state['breakfast']) == 'Autre petit-déj':\r\n            ui.label('Détail autre petit-déj').classes('small mt-3'); custom_inputs(state['breakfast_custom'], 'breakfast_custom')\r\n\r\n        ui.separator().classes('my-4')\r\n        with ui.row().classes('items-center justify-between w-full'):\r\n            ui.label('Goûters').classes('font-bold text-base')\r\n            ui.button('Ajouter un goûter', icon='add', on_click=add_snack).props('unelevated color=primary')\r\n        if not state['snacks']:\r\n            ui.label('Exemple : bonbons crocodile + boîte de sushis antigaspi. Ajoute une ligne par goûter mangé.').classes('small mt-1')\r\n        for row in list(state['snacks']):\r\n            with ui.row().classes('w-full items-end gap-3 mt-2'):\r\n                ui.select(list(snacks()), value=safe_choice(list(snacks()), row.get('name', 'Aucun')), label='Goûter').on_value_change(lambda e, r=row: (r.update({'name': e.value}), refresh())).classes('grow')\r\n                if row.get('name') == 'Autre goûter':\r\n                    ui.input(label='Nom', value=row['custom']['name']).on_value_change(lambda e, r=row: (r['custom'].update({'name': e.value}), refresh())).classes('w-52')\r\n                    for key, lab in [('protein','Prot. g'),('carbs','Gluc. g'),('fat','Lip. g')]:\r\n                        ui.number(label=lab, value=row['custom'][key], min=0, step=1).on_value_change(lambda e, r=row, k=key: (r['custom'].update({k: float(e.value or 0)}), refresh())).classes('w-28')\r\n                    ui.number(label='Kcal', value=row['custom']['kcal'], min=0, step=10).on_value_change(lambda e, r=row: (r['custom'].update({'kcal': float(e.value or 0)}), refresh())).classes('w-28')\r\n                else:\r\n                    ui.number(label='Portions', value=row.get('qty', 1.0), min=0, max=8, step=0.25, format='%.2f').on_value_change(lambda e, r=row: (r.update({'qty': float(e.value or 0)}), refresh())).classes('w-32')\r\n                ui.button(icon='delete', on_click=lambda r=row: remove_snack(r['id'])).props('flat round color=negative')\r\n            if row.get('name') != 'Autre goûter':\r\n                hint = serving_hint(row.get('name', ''), float(row.get('qty') or 0))\r\n                if hint:\r\n                    ui.label(hint).classes('small -mt-2 mb-2')\r\n        sm = snack_macros()\r\n        if state['snacks']:\r\n            ui.label(f'Total goûters : {sm.protein:g} g protéines · {sm.carbs:g} g glucides · {sm.fat:g} g lipides · {sm.energy():.0f} kcal').classes('small mt-2')\r\n\r\n        if uses_shaker():\r\n            ui.separator().classes('my-4')\r\n            if state['shaker']:\r\n                ui.number(label='Lait demi-écrémé dans le shaker en ml', value=state['shaker_ml'], min=0, max=600, step=50).on_value_change(lambda e: setv('shaker_ml', int(e.value or 0))).classes('w-80 mt-3')\r\n                ui.label('Shaker par défaut : 25 g whey + 250 ml lait demi-écrémé. Pas d’autre liquide pour garder la routine stable.').classes('small mt-2')\r\n            ui.label('Autre chose autour du shaker').classes('small mt-3')\r\n            custom_inputs(state['shaker_custom'], 'shaker_custom')\r\n\r\n\r\ndef status_label(st: str) -> str:\r\n    return {'ok':'Dans la zone','warn':'À surveiller','bad':'Hors zone'}[st]\r\n\r\ndef range_bar(label: str, value: float, center: float, low: float, high: float, unit: str):\r\n    st = status_for(value, low, high)\r\n    max_scale = max(high * 1.35, value * 1.15, 1)\r\n    fill = min(value / max_scale * 100, 100); zone_left = low / max_scale * 100; zone_width = (high - low) / max_scale * 100; mid = center / max_scale * 100\r\n    pill = {'ok':'pill-ok','warn':'pill-warn','bad':'pill-bad'}[st]\r\n    ui.html(f'''\r\n    <div class=\"range-wrap status-{st}\">\r\n      <div class=\"range-head\"><div class=\"range-title\">{label} — {value:.0f} {unit} <span class=\"pill {pill}\">{status_label(st)}</span></div><div class=\"range-note\">zone utile : {low:.0f}-{high:.0f} {unit}</div></div>\r\n      <div class=\"range-track\"><div class=\"range-zone\" style=\"left:{zone_left:.1f}%;width:{zone_width:.1f}%\"></div><div class=\"range-fill\" style=\"width:{fill:.1f}%\"></div><div class=\"range-mid\" style=\"left:{mid:.1f}%\"></div></div>\r\n      <div class=\"range-labels\"><span>0</span><span>repère {center:.0f}</span><span>{max_scale:.0f} {unit}</span></div>\r\n    </div>''')\r\n\r\n\r\ndef dashboard(total: Macros, target: Target):\r\n    ranges = target.ranges()\r\n    statuses = [status_for(total.protein,*ranges['protein']), status_for(total.carbs,*ranges['carbs']), status_for(total.fat,*ranges['fat']), status_for(total.energy(),*ranges['kcal'])]\r\n    overall = 'ok' if all(s == 'ok' for s in statuses) else 'warn' if all(s != 'bad' for s in statuses) else 'bad'\r\n    with ui.card().classes('card w-full'):\r\n        ui.label('Total estimé').classes('section-title')\r\n        ui.html(f'''<div class=\"metric-grid\"><div class=\"metric\"><div class=\"metric-label\">Protéines</div><div class=\"metric-value\">{total.protein:.0f} g</div></div><div class=\"metric\"><div class=\"metric-label\">Glucides</div><div class=\"metric-value\">{total.carbs:.0f} g</div></div><div class=\"metric\"><div class=\"metric-label\">Lipides</div><div class=\"metric-value\">{total.fat:.0f} g</div></div><div class=\"metric\"><div class=\"metric-label\">Énergie</div><div class=\"metric-value\">{total.energy():.0f} kcal</div></div></div>''')\r\n        range_bar('Protéines', total.protein, target.protein, *ranges['protein'], 'g')\r\n        range_bar('Glucides', total.carbs, target.carbs, *ranges['carbs'], 'g')\r\n        range_bar('Lipides', total.fat, target.fat, *ranges['fat'], 'g')\r\n        range_bar('Énergie', total.energy(), target.kcal, *ranges['kcal'], 'kcal')\r\n        box = {'ok':'box-ok','warn':'box-warn','bad':'box-bad'}[overall]\r\n        title = {'ok':'✅ Journée bien calée','warn':'\uD83D\uDFE1 Journée récupérable','bad':'\uD83D\uDD34 Il manque un vrai ajustement'}[overall]\r\n        ui.html(f'<div class=\"box {box}\"><b>{title}</b><br>{dinner_advice(total, target)}</div>')\r\n        ctx = ' '.join([state['self_protein'], state['self_veg'], state['self_sauce']]) if state['self'] else ''\r\n        for w in warnings(total, target, ctx): ui.html(f'<div class=\"box box-warn\">{w}</div>')\r\n\r\n\r\ndef prepare_content():\r\n    ui.html('<div class=\"hero\"><h1 class=\"h1\">Préparer sa journée</h1><div class=\"subtitle\">Planifie tes repas sans tracker compliqué. Les chiffres restent des ordres de grandeur utiles.</div></div>')\r\n    common_controls(); self_controls(); extras_card()\r\n    if not uses_self() or not state['self']: meal_card('Déjeuner')\r\n    meal_card('Dîner'); dashboard(total_macros(), current_target())\r\n\r\ndef completer_content():\r\n    ui.html('<div class=\"hero\"><h1 class=\"h1\">Compléter sa journée</h1><div class=\"subtitle\">Entre ce qui est déjà mangé, puis ajuste le dîner.</div></div>')\r\n    common_controls(); self_controls(); extras_card(); meal_card('Dîner'); dashboard(total_macros(), current_target())\r\n    ui.html('<div class=\"box box-info\"><b>Si faim :</b> ajoute 0,5 portion de féculent ou une banane.<br><b>Version sèche plus agressive :</b> garde protéines/légumes, réduis surtout les glucides hors sport.</div>')\r\n\r\ndef bilan_content():\r\n    ui.html('<div class=\"hero\"><h1 class=\"h1\">Bilan de journée</h1><div class=\"subtitle\">Regarde si la journée est cohérente, puis exporte si besoin.</div></div>')\r\n    common_controls(); self_controls(); extras_card(); meal_card('Déjeuner'); meal_card('Dîner')\r\n    with ui.card().classes('card w-full'):\r\n        ui.label('Autre aliment de la journée').classes('section-title'); custom_inputs(state['custom'], 'custom')\r\n    total = total_macros(include_custom=True); target = current_target(); dashboard(total, target)\r\n    ui.html(f'<div class=\"box box-info\"><b>Commentaire :</b> {daily_comment(total, target)}<br><b>Suggestion demain :</b> {tomorrow_suggestion(total, target)}</div>')\r\n    with ui.row().classes('mt-4'):\r\n        def export_json():\r\n            path = EXPORT_DIR / f'bilan_{datetime.now():%Y%m%d_%H%M%S}.json'; path.write_text(json.dumps(export_dict(total, target), indent=2, ensure_ascii=False), encoding='utf-8'); ui.notify(f'Export JSON créé : {path.name}')\r\n        def export_csv():\r\n            path = EXPORT_DIR / f'bilan_{datetime.now():%Y%m%d_%H%M%S}.csv'\r\n            with path.open('w', newline='', encoding='utf-8') as f:\r\n                writer = csv.writer(f); writer.writerow(['macro','total','repere']); writer.writerows([['proteines',total.protein,target.protein],['glucides',total.carbs,target.carbs],['lipides',total.fat,target.fat],['kcal',total.energy(),target.kcal]])\r\n            ui.notify(f'Export CSV créé : {path.name}')\r\n        ui.button('Exporter JSON', on_click=export_json).props('unelevated color=primary'); ui.button('Exporter CSV', on_click=export_csv).props('outline color=primary')\r\n\r\n@ui.page('/')\r\ndef page_prepare(): page_shell('Préparer', prepare_content)\r\n@ui.page('/completer')\r\ndef page_completer(): page_shell('Compléter', completer_content)\r\n@ui.page('/bilan')\r\ndef page_bilan(): page_shell('Bilan', bilan_content)\r\n\r\nui.run(title='Meal Builder', host='0.0.0.0', port=PORT, reload=False, storage_secret=NICEGUI_STORAGE_SECRET)\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app.py b/app.py
+--- a/app.py	(revision e314e852783d8fc6d926d597b0611ed1047cedea)
++++ b/app.py	(date 1778163336253)
+@@ -2,7 +2,6 @@
+ 
+ import csv
+ import json
+-import os
+ from datetime import datetime
+ from pathlib import Path
+ from uuid import uuid4
+@@ -11,7 +10,7 @@
+ 
+ from src.data import (
+     BREAKFASTS, CARBS, FATS, MILKS_PER_100ML, PROTEINS, SELF_PROTEINS, SELF_RICE,
+-    SELF_SAUCE, SELF_VEG, SNACKS, SPORT_EXTRAS, TARGETS, PROFILES, Macros, Target,
++    SELF_SAUCE, SELF_VEG, SNACKS, SPORT_EXTRAS, TARGETS, Macros, Target,
+ )
+ from src.nutrition import add_macros, export_dict, scale_macros, status_for
+ from src.recommendations import daily_comment, dinner_advice, tomorrow_suggestion, warnings
+@@ -21,10 +20,6 @@
+ EXPORT_DIR.mkdir(exist_ok=True)
+ app.add_static_files('/exports', str(EXPORT_DIR))
+ 
+-APP_PASSWORD = os.environ.get('APP_PASSWORD', '').strip()
+-NICEGUI_STORAGE_SECRET = os.environ.get('NICEGUI_STORAGE_SECRET', 'dev-secret-change-me')
+-PORT = int(os.environ.get('PORT', '8080'))
+-
+ ui.add_head_html('''
+ <style>
+ :root{--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--soft:#f8fafc;--blue:#2563eb;--green:#16a34a;--amber:#f59e0b;--red:#dc2626;--good:#dcfce7;--warn:#fef3c7;--bad:#fee2e2;}
+@@ -32,61 +27,22 @@
+ </style>
+ ''', shared=True)
+ 
+-def profile_cfg() -> dict:
+-    return PROFILES[state['profile']]
+-
+-
+-def targets() -> dict[str, Target]:
+-    return profile_cfg()['targets']
+-
+-
+-def proteins() -> dict[str, Macros]:
+-    return profile_cfg()['proteins']
+-
+-
+-def carbs() -> dict[str, Macros]:
+-    return profile_cfg()['carbs']
+-
+-
+-def fats() -> dict[str, Macros]:
+-    return profile_cfg()['fats']
+-
+-
+-def breakfasts() -> dict[str, Macros]:
+-    return profile_cfg()['breakfasts']
+-
+-
+-def snacks() -> dict[str, Macros]:
+-    return profile_cfg()['snacks']
+-
+-
+-def sports_catalog() -> dict[str, Macros]:
+-    return profile_cfg()['sports']
+-
+-
+-def movement_cfg() -> dict:
+-    return profile_cfg()['default_movement']
+-
+-
+-def uses_self() -> bool:
+-    return bool(profile_cfg().get('uses_self', True))
+-
+-
+-def uses_shaker() -> bool:
+-    return bool(profile_cfg().get('uses_shaker', True))
+-
+-
+-def uses_coffee() -> bool:
+-    return bool(profile_cfg().get('uses_coffee', True))
++PROFILE = {
++    'sex': 'Homme',
++    'age': 26,
++    'height_cm': 165,
++    'weight_kg': 62,
++    'goal': 'sèche / recomposition musculaire : abdos visibles + densité musculaire',
++}
++BMR_KCAL = round(10 * PROFILE['weight_kg'] + 6.25 * PROFILE['height_cm'] - 5 * PROFILE['age'] + 5)
+ 
+ 
+ def custom_state():
+     return {'name': '', 'protein': 0.0, 'carbs': 0.0, 'fat': 0.0, 'kcal': 0.0}
+ 
+ state = {
+-    'profile': 'Liêm',
+     'day': 'Muscu',
+-    'movement_active': True, 'movement_amount': 4.0,
++    'walk_enabled': True, 'walk_km': 4.0,
+     'sports': [],
+     'self': False, 'self_protein': list(SELF_PROTEINS)[0], 'self_rice': list(SELF_RICE)[0], 'self_veg': list(SELF_VEG)[0], 'self_sauce': list(SELF_SAUCE)[0], 'self_custom': custom_state(),
+     'breakfast': 'Aucun', 'breakfast_custom': custom_state(),
+@@ -101,25 +57,6 @@
+ def refresh(): ui.navigate.reload()
+ def setv(key, value): state[key] = value; refresh()
+ 
+-def set_profile(name: str):
+-    state['profile'] = name
+-    cfg = PROFILES[name]
+-    state['day'] = cfg['default_day']
+-    state['movement_active'] = True
+-    state['movement_amount'] = cfg['default_movement']['default']
+-    state['sports'] = []
+-    state['breakfast'] = 'Aucun'
+-    state['self'] = False
+-    state['shaker'] = False
+-    state['coffee_count'] = 0
+-    state['snacks'] = []
+-    for meal in state['meals'].values():
+-        meal.clear()
+-    refresh()
+-
+-def safe_choice(options: list[str], value: str) -> str:
+-    return value if value in options else options[0]
+-
+ def custom_macros(d: dict) -> Macros:
+     kcal = d.get('kcal') or None
+     return Macros(float(d.get('protein') or 0), float(d.get('carbs') or 0), float(d.get('fat') or 0), kcal)
+@@ -128,28 +65,20 @@
+     return scale_macros(source.get(name, Macros()), portions)
+ 
+ def coffee_macros() -> Macros:
+-    if not uses_coffee():
+-        return Macros()
+     return scale_macros(MILKS_PER_100ML['Lait demi-écrémé'], state['coffee_count'] * state['coffee_milk_ml'] / 100)
+ 
+ def shaker_macros() -> Macros:
+-    if not uses_shaker():
+-        return Macros()
+     if not state['shaker']: return custom_macros(state['shaker_custom'])
+     whey = Macros(20, 2, 1.5, 100)
+     milk = scale_macros(MILKS_PER_100ML['Lait demi-écrémé'], state['shaker_ml'] / 100)
+     return add_macros([whey, milk, custom_macros(state['shaker_custom'])])
+ 
+ def self_macros() -> Macros:
+-    if not uses_self():
+-        return Macros()
+     if not state['self']: return custom_macros(state['self_custom'])
+     return add_macros([SELF_PROTEINS[state['self_protein']], SELF_RICE[state['self_rice']], SELF_VEG[state['self_veg']], SELF_SAUCE[state['self_sauce']], custom_macros(state['self_custom'])])
+ 
+ def breakfast_macros() -> Macros:
+-    choice = safe_choice(list(breakfasts()), state['breakfast'])
+-    state['breakfast'] = choice
+-    return add_macros([breakfasts().get(choice, Macros()), custom_macros(state['breakfast_custom'])])
++    return add_macros([BREAKFASTS[state['breakfast']], custom_macros(state['breakfast_custom'])])
+ 
+ def snack_macros() -> Macros:
+     items: list[Macros] = []
+@@ -157,12 +86,12 @@
+         if row.get('name') == 'Autre goûter':
+             items.append(custom_macros(row['custom']))
+         else:
+-            items.append(macro_from_select(snacks(), row.get('name', 'Aucun'), row.get('qty', 1.0)))
++            items.append(macro_from_select(SNACKS, row.get('name', 'Aucun'), row.get('qty', 1.0)))
+     return add_macros(items)
+ 
+ 
+ def add_snack():
+-    default = 'Bonbons crocodile — 30 g' if 'Bonbons crocodile — 30 g' in snacks() else [x for x in snacks() if x != 'Aucun'][0]
++    default = 'Bonbons crocodile — 30 g' if 'Bonbons crocodile — 30 g' in SNACKS else [x for x in SNACKS if x != 'Aucun'][0]
+     state['snacks'].append({'id': str(uuid4()), 'name': default, 'qty': 1.0, 'custom': custom_state()})
+     refresh()
+ 
+@@ -172,19 +101,19 @@
+     refresh()
+ 
+ def ingredient_options(kind: str):
+-    return {'Protéine': list(proteins()), 'Féculent': list(carbs()), 'Huile / sauce': list(fats())}[kind]
++    return {'Protéine': list(PROTEINS), 'Féculent': list(CARBS), 'Huile / sauce': list(FATS)}[kind]
+ 
+ def meal_macros(title: str) -> Macros:
+     items: list[Macros] = []
+     for row in state['meals'][title]:
+-        if row['kind'] == 'Protéine': items.append(macro_from_select(proteins(), row['name'], row['qty']))
+-        elif row['kind'] == 'Féculent': items.append(macro_from_select(carbs(), row['name'], row['qty']))
+-        elif row['kind'] == 'Huile / sauce': items.append(macro_from_select(fats(), row['name'], row['qty']))
++        if row['kind'] == 'Protéine': items.append(macro_from_select(PROTEINS, row['name'], row['qty']))
++        elif row['kind'] == 'Féculent': items.append(macro_from_select(CARBS, row['name'], row['qty']))
++        elif row['kind'] == 'Huile / sauce': items.append(macro_from_select(FATS, row['name'], row['qty']))
+         elif row['kind'] == 'Autre': items.append(custom_macros(row['custom']))
+     return add_macros(items)
+ 
+ def total_macros(include_custom: bool = False) -> Macros:
+-    items = [breakfast_macros(), coffee_macros(), self_macros(), meal_macros('Déjeuner') if (not uses_self() or not state['self']) else Macros(), meal_macros('Dîner'), snack_macros(), shaker_macros()]
++    items = [breakfast_macros(), coffee_macros(), self_macros(), meal_macros('Déjeuner') if not state['self'] else Macros(), meal_macros('Dîner'), snack_macros(), shaker_macros()]
+     if include_custom: items.append(custom_macros(state['custom']))
+     return add_macros(items)
+ 
+@@ -193,56 +122,31 @@
+     if name == 'Autre sport':
+         kcal = float(row.get('kcal') or 0)
+         return Macros(carbs=round(kcal / 7.0, 0), kcal=kcal)  # compensation simple, surtout en glucides
+-    return sports_catalog().get(name, Macros())
++    return SPORT_EXTRAS.get(name, Macros())
++
++
++WALK_BASELINE_KM = 4.0
++WALK_KCAL_PER_KM = 40.0
++
++
++def walking_adjustment() -> Macros:
++    # Les objectifs de base supposent déjà environ 4 km de marche dans une journée normale.
++    # On ajuste donc seulement l'écart par rapport à ce repère.
++    km = float(state['walk_km'] or 0) if state.get('walk_enabled', True) else 0.0
++    delta_km = km - WALK_BASELINE_KM
++    kcal = delta_km * WALK_KCAL_PER_KM
++    carbs = round(kcal / 7.0, 0)
++    return Macros(carbs=carbs, kcal=kcal)
+ 
+ 
+ def sports_extra() -> Macros:
+     return add_macros([sport_row_extra(row) for row in state['sports']])
+ 
+ 
+-def movement_extra() -> Macros:
+-    cfg = movement_cfg()
+-    actual = float(state['movement_amount'] or 0) if state.get('movement_active') else 0.0
+-    diff = actual - float(cfg['default'])
+-    kcal = diff * float(cfg['kcal_per_unit'])
+-    return Macros(carbs=round(kcal / 7.0, 0), kcal=kcal)
+-
+-
+ def current_target() -> Target:
+-    day_options = targets()
+-    if state['day'] not in day_options:
+-        state['day'] = profile_cfg()['default_day']
+-    base = day_options[state['day']]
+-    extra = add_macros([sports_extra(), movement_extra()])
+-    return Target(base.protein, base.carbs + extra.carbs, base.fat, base.kcal + extra.energy())
+-
+-
+-def password_gate() -> bool:
+-    """Return True when the current browser session may access the app.
+-
+-    Locally, no password is required unless APP_PASSWORD is defined.
+-    On Render, set APP_PASSWORD in Environment to protect the public URL.
+-    """
+-    if not APP_PASSWORD:
+-        return True
+-    if app.storage.user.get('authenticated') is True:
+-        return True
+-
+-    with ui.card().classes('card w-full').style('max-width:520px;margin:80px auto;'):
+-        ui.label('Accès privé').classes('section-title')
+-        ui.label('Entre le mot de passe configuré pour cette application.').classes('small')
+-        password = ui.input('Mot de passe', password=True, password_toggle_button=True).classes('w-full mt-3')
+-
+-        def login() -> None:
+-            if password.value == APP_PASSWORD:
+-                app.storage.user['authenticated'] = True
+-                ui.notify('Connexion réussie', color='positive')
+-                refresh()
+-            else:
+-                ui.notify('Mot de passe incorrect', color='negative')
+-
+-        ui.button('Entrer', on_click=login).props('unelevated color=primary').classes('mt-3')
+-    return False
++    base = TARGETS[state['day']]
++    extra = add_macros([sports_extra(), walking_adjustment()])
++    return Target(base.protein, max(0, base.carbs + extra.carbs), base.fat, max(0, base.kcal + extra.energy()))
+ 
+ 
+ def page_shell(active: str, render):
+@@ -256,25 +160,36 @@
+             ui.label('1 portion protéine ≈ 30-35 g').classes('text-xs text-blue-200 mt-2')
+             ui.label('1 portion féculent ≈ 50 g glucides').classes('text-xs text-blue-200 mt-1')
+         with ui.element('main').classes('main'):
+-            if password_gate():
+-                render()
++            render()
+ 
+ 
+ 
+ def profile_card():
+-    cfg = profile_cfg()
+-    mv = movement_cfg()
+     with ui.card().classes('card w-full'):
+         ui.label('Profil utilisé par l’app').classes('section-title')
+         ui.html(f"""
+-        <div class="box box-info" style="font-size:13px;line-height:1.55">
+-          <span style="font-weight:650">{cfg['display_name']}</span> · {cfg['sex'].lower()}, {cfg['age']} ans · {cfg['height_cm']} cm · {cfg['weight_kg']} kg<br>
+-          Objectif : {cfg['goal']}<br>
+-          Métabolisme de base estimé : ≈ {cfg['bmr_kcal']} kcal/j. Déplacement par défaut : {mv['label'].lower()} {mv['default']:g} {mv['unit']}.
++        <div style="display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:14px">
++          <div class="metric" style="padding:14px 16px">
++            <div class="metric-label">Profil</div>
++            <div style="font-size:16px;font-weight:500;color:#334155;margin-top:4px">{PROFILE['sex']}, {PROFILE['age']} ans</div>
++          </div>
++          <div class="metric" style="padding:14px 16px">
++            <div class="metric-label">Taille / poids</div>
++            <div style="font-size:16px;font-weight:500;color:#334155;margin-top:4px">{PROFILE['height_cm']} cm · {PROFILE['weight_kg']} kg</div>
++          </div>
++          <div class="metric" style="padding:14px 16px">
++            <div class="metric-label">Objectif</div>
++            <div style="font-size:16px;font-weight:500;color:#334155;margin-top:4px;line-height:1.25">Summer body · recomposition</div>
++          </div>
++          <div class="metric" style="padding:14px 16px">
++            <div class="metric-label">Métabolisme de base estimé</div>
++            <div style="font-size:16px;font-weight:500;color:#334155;margin-top:4px">≈ {BMR_KCAL} kcal/j</div>
++          </div>
+         </div>
+-        <div class="small mt-2">Ces infos servent de contexte. Le poids varie naturellement : l’app suit surtout la cohérence des repas et des repères.</div>
++        <div class="small mt-3">Calcul du métabolisme de base : formule Mifflin-St Jeor. Ces infos servent juste de contexte ; les repères de repas restent la partie importante.</div>
+         """)
+ 
++
+ def serving_hint(name: str, qty: float) -> str:
+     import re
+     if name in {'Aucune', 'Aucun'}:
+@@ -307,7 +222,7 @@
+ 
+ 
+ def add_sport():
+-    state['sports'].append({'id': str(uuid4()), 'name': [x for x in sports_catalog() if x != 'Aucun'][0], 'kcal': 250})
++    state['sports'].append({'id': str(uuid4()), 'name': "Course 30 min à 6'/km", 'kcal': 250})
+     refresh()
+ 
+ 
+@@ -324,7 +239,7 @@
+     if not state['sports']:
+         ui.label('Ajoute seulement les activités en plus de ta journée choisie. Exemple : une course le soir après une journée muscu.').classes('small mt-1')
+         return
+-    sport_options = [x for x in sports_catalog() if x != 'Aucun']
++    sport_options = [x for x in SPORT_EXTRAS if x != 'Aucun']
+     for row in list(state['sports']):
+         with ui.row().classes('w-full items-end gap-3 mt-2'):
+             ui.select(sport_options, value=row.get('name', sport_options[0]), label='Sport ajouté').on_value_change(lambda e, r=row: (r.update({'name': e.value}), refresh())).classes('grow')
+@@ -339,25 +254,19 @@
+     profile_card()
+     with ui.card().classes('card w-full'):
+         ui.label('Réglages du jour').classes('section-title')
+-        cfg = movement_cfg()
+-        with ui.grid(columns=2).classes('w-full gap-4'):
+-            ui.select(list(PROFILES), value=state['profile'], label='Profil').on_value_change(lambda e: set_profile(e.value)).classes('w-full')
+-            ui.select(list(targets()), value=safe_choice(list(targets()), state['day']), label='Type de journée').on_value_change(lambda e: setv('day', e.value)).classes('w-full')
+-            if uses_coffee():
+-                ui.number(label='Cafés au lait', value=state['coffee_count'], min=0, max=8, step=1).on_value_change(lambda e: setv('coffee_count', int(e.value or 0))).classes('w-full')
+-            ui.switch(f"{cfg['label']} par défaut", value=state.get('movement_active', True)).on_value_change(lambda e: setv('movement_active', e.value))
+-        if state.get('movement_active', True):
+-            ui.number(label=f"{cfg['label']} aujourd’hui ({cfg['unit']})", value=state.get('movement_amount', cfg['default']), min=0, max=30, step=0.25).on_value_change(lambda e: setv('movement_amount', float(e.value or 0))).classes('w-80 mt-3')
+-            ui.label(f"Base du profil : {cfg['default']:g} {cfg['unit']}. Si tu changes cette valeur, les repères s’ajustent par rapport à cette base.").classes('small mt-2')
+-        else:
+-            ui.label(f"{cfg['label']} désactivé aujourd’hui : l’app retire l’équivalent de la base habituelle ({cfg['default']:g} {cfg['unit']}).").classes('small mt-2')
+-        if uses_coffee():
+-            ui.label(f"Café au lait : {state['coffee_milk_ml']} ml de lait demi-écrémé par café.").classes('small mt-3')
++        with ui.grid(columns=4).classes('w-full gap-4'):
++            ui.select(list(TARGETS), value=state['day'], label='Type de journée').on_value_change(lambda e: setv('day', e.value)).classes('w-full')
++            ui.switch('Marche du jour', value=state.get('walk_enabled', True)).on_value_change(lambda e: setv('walk_enabled', e.value)).classes('mt-5')
++            ui.number(label='Distance marche en km', value=state.get('walk_km', 4.0), min=0, max=25, step=0.5, format='%.1f').on_value_change(lambda e: setv('walk_km', float(e.value or 0))).classes('w-full')
++            ui.number(label='Cafés au lait', value=state['coffee_count'], min=0, max=8, step=1).on_value_change(lambda e: setv('coffee_count', int(e.value or 0))).classes('w-full')
++        walk = walking_adjustment()
++        sign = '+' if walk.energy() >= 0 else ''
++        displayed_walk_km = float(state.get('walk_km') or 0) if state.get('walk_enabled', True) else 0.0
++        ui.label(f"Marche : 4 km est le repère de base. Aujourd’hui : {displayed_walk_km:g} km → {sign}{walk.energy():.0f} kcal et {sign}{walk.carbs:.0f} g glucides sur les repères.").classes('small mt-3')
++        ui.label(f"Café au lait : {state['coffee_milk_ml']} ml de lait demi-écrémé par café.").classes('small mt-1')
+         sports_controls()
+ 
+ def self_controls():
+-    if not uses_self():
+-        return
+     with ui.card().classes('card w-full'):
+         with ui.row().classes('items-center justify-between w-full'):
+             ui.label('Self d’entreprise').classes('section-title')
+@@ -374,7 +283,7 @@
+ 
+ 
+ def add_ingredient(meal: str):
+-    state['meals'][meal].append({'id': str(uuid4()), 'kind': 'Protéine', 'name': list(proteins())[1], 'qty': 1.0, 'custom': custom_state()})
++    state['meals'][meal].append({'id': str(uuid4()), 'kind': 'Protéine', 'name': list(PROTEINS)[1], 'qty': 1.0, 'custom': custom_state()})
+     refresh()
+ 
+ def remove_ingredient(meal: str, item_id: str):
+@@ -416,10 +325,9 @@
+     with ui.card().classes('card w-full'):
+         ui.label('Petit-déj, goûters et shaker').classes('section-title')
+         with ui.grid(columns=2).classes('w-full gap-4'):
+-            ui.select(list(breakfasts()), value=safe_choice(list(breakfasts()), state['breakfast']), label='Petit-déj').on_value_change(lambda e: setv('breakfast', e.value))
+-            if uses_shaker():
+-                ui.switch('Shaker whey', value=state['shaker']).on_value_change(lambda e: setv('shaker', e.value))
+-        if safe_choice(list(breakfasts()), state['breakfast']) == 'Autre petit-déj':
++            ui.select(list(BREAKFASTS), value=state['breakfast'], label='Petit-déj').on_value_change(lambda e: setv('breakfast', e.value))
++            ui.switch('Shaker whey', value=state['shaker']).on_value_change(lambda e: setv('shaker', e.value))
++        if state['breakfast'] == 'Autre petit-déj':
+             ui.label('Détail autre petit-déj').classes('small mt-3'); custom_inputs(state['breakfast_custom'], 'breakfast_custom')
+ 
+         ui.separator().classes('my-4')
+@@ -430,7 +338,7 @@
+             ui.label('Exemple : bonbons crocodile + boîte de sushis antigaspi. Ajoute une ligne par goûter mangé.').classes('small mt-1')
+         for row in list(state['snacks']):
+             with ui.row().classes('w-full items-end gap-3 mt-2'):
+-                ui.select(list(snacks()), value=safe_choice(list(snacks()), row.get('name', 'Aucun')), label='Goûter').on_value_change(lambda e, r=row: (r.update({'name': e.value}), refresh())).classes('grow')
++                ui.select(list(SNACKS), value=row.get('name', 'Aucun'), label='Goûter').on_value_change(lambda e, r=row: (r.update({'name': e.value}), refresh())).classes('grow')
+                 if row.get('name') == 'Autre goûter':
+                     ui.input(label='Nom', value=row['custom']['name']).on_value_change(lambda e, r=row: (r['custom'].update({'name': e.value}), refresh())).classes('w-52')
+                     for key, lab in [('protein','Prot. g'),('carbs','Gluc. g'),('fat','Lip. g')]:
+@@ -447,15 +355,13 @@
+         if state['snacks']:
+             ui.label(f'Total goûters : {sm.protein:g} g protéines · {sm.carbs:g} g glucides · {sm.fat:g} g lipides · {sm.energy():.0f} kcal').classes('small mt-2')
+ 
+-        if uses_shaker():
+-            ui.separator().classes('my-4')
+-            if state['shaker']:
+-                ui.number(label='Lait demi-écrémé dans le shaker en ml', value=state['shaker_ml'], min=0, max=600, step=50).on_value_change(lambda e: setv('shaker_ml', int(e.value or 0))).classes('w-80 mt-3')
+-                ui.label('Shaker par défaut : 25 g whey + 250 ml lait demi-écrémé. Pas d’autre liquide pour garder la routine stable.').classes('small mt-2')
+-            ui.label('Autre chose autour du shaker').classes('small mt-3')
+-            custom_inputs(state['shaker_custom'], 'shaker_custom')
++        ui.separator().classes('my-4')
++        if state['shaker']:
++            ui.number(label='Lait demi-écrémé dans le shaker en ml', value=state['shaker_ml'], min=0, max=600, step=50).on_value_change(lambda e: setv('shaker_ml', int(e.value or 0))).classes('w-80 mt-3')
++            ui.label('Shaker par défaut : 25 g whey + 250 ml lait demi-écrémé. Pas d’autre liquide pour garder la routine stable.').classes('small mt-2')
++        ui.label('Autre chose autour du shaker').classes('small mt-3')
++        custom_inputs(state['shaker_custom'], 'shaker_custom')
+ 
+-
+ def status_label(st: str) -> str:
+     return {'ok':'Dans la zone','warn':'À surveiller','bad':'Hors zone'}[st]
+ 
+@@ -493,7 +399,7 @@
+ def prepare_content():
+     ui.html('<div class="hero"><h1 class="h1">Préparer sa journée</h1><div class="subtitle">Planifie tes repas sans tracker compliqué. Les chiffres restent des ordres de grandeur utiles.</div></div>')
+     common_controls(); self_controls(); extras_card()
+-    if not uses_self() or not state['self']: meal_card('Déjeuner')
++    if not state['self']: meal_card('Déjeuner')
+     meal_card('Dîner'); dashboard(total_macros(), current_target())
+ 
+ def completer_content():
+@@ -525,4 +431,4 @@
+ @ui.page('/bilan')
+ def page_bilan(): page_shell('Bilan', bilan_content)
+ 
+-ui.run(title='Meal Builder', host='0.0.0.0', port=PORT, reload=False, storage_secret=NICEGUI_STORAGE_SECRET)
++ui.run(title='Meal Builder', reload=False)
+Index: README.md
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># Meal Builder NiceGUI\r\n\r\nApplication Python/NiceGUI pour construire des repas simples en sèche / recomposition musculaire, sans transformer l'alimentation en tableur.\r\n\r\n## Installation locale\r\n\r\n```bash\r\npip install -r requirements.txt\r\n```\r\n\r\n## Lancement local\r\n\r\n```bash\r\npython app.py\r\n```\r\n\r\nPuis ouvrir : http://localhost:8080\r\n\r\nEn local, aucun mot de passe n'est demandé par défaut. Pour tester le mode privé :\r\n\r\n```bash\r\nAPP_PASSWORD=ton_mot_de_passe python app.py\r\n```\r\n\r\nSous PowerShell :\r\n\r\n```powershell\r\n$env:APP_PASSWORD=\"ton_mot_de_passe\"\r\npython app.py\r\n```\r\n\r\n## Profils disponibles\r\n\r\n- **Liêm** : homme, 26 ans, 165 cm, 62 kg, objectif summer body / recomposition, marche par défaut 4 km.\r\n- **Mathilde** : femme, 26 ans, 160 cm, 60 kg, objectif perte de gras + tonus bras/abdos/cuisses + fessiers musclés, vélo obligatoire par défaut 1h30, tupperwares maison uniquement.\r\n\r\nLe profil se choisit dans **Réglages du jour**. Les aliments, petits-déjeuners, goûters, sports et repères nutritionnels s'adaptent au profil.\r\n\r\n## Ce que fait l'app\r\n\r\n- Préparer, compléter ou faire le bilan d'une journée.\r\n- Objectifs affichés comme zones utiles plutôt que chiffres rigides.\r\n- Repas maison avec plusieurs ingrédients : protéines, féculents, huile/sauce ou aliment libre.\r\n- Self d'entreprise avec estimations simples et ajout libre pour les profils concernés.\r\n- Petit-déj et plusieurs goûters. Shaker et cafés au lait seulement pour les profils concernés.\r\n- Shaker standard pour Liêm : 25 g whey + lait demi-écrémé, 250 ml par défaut.\r\n- Déplacement par défaut modifiable : marche pour Liêm, vélo pour Mathilde.\r\n- Sports additionnels multiples avec bouton **Ajouter un sport**.\r\n- Barres visuelles vert / jaune / rouge selon la cohérence avec la zone cible.\r\n- Quantité totale affichée pour les portions : exemple 1,5 × 75 g = environ 112,5 g.\r\n- Export JSON ou CSV dans le dossier `exports/`.\r\n\r\n## Déploiement gratuit sur Render\r\n\r\nLe repo contient déjà :\r\n\r\n```text\r\nDockerfile\r\nrender.yaml\r\n```\r\n\r\nL'app écoute automatiquement le port fourni par Render via la variable `PORT`.\r\n\r\n### Étapes\r\n\r\n1. Pousse ce repo sur GitHub.\r\n2. Va sur Render et crée un **New Web Service**.\r\n3. Connecte ton repo `automatic-meal-analysis`.\r\n4. Render devrait détecter `render.yaml`.\r\n5. Dans les variables d'environnement, renseigne :\r\n\r\n```text\r\nAPP_PASSWORD=un_mot_de_passe_long\r\n```\r\n\r\n`NICEGUI_STORAGE_SECRET` est généré automatiquement par `render.yaml` si Render l'accepte. Sinon, crée-la manuellement avec une valeur longue et aléatoire.\r\n\r\nExemple :\r\n\r\n```text\r\nNICEGUI_STORAGE_SECRET=change-moi-avec-une-longue-chaine-aleatoire\r\n```\r\n\r\n6. Déploie.\r\n7. Render donnera une URL publique, accessible depuis téléphone.\r\n\r\n### Notes importantes\r\n\r\n- Le plan gratuit peut mettre l'app en sommeil après inactivité. Le premier chargement peut donc prendre quelques dizaines de secondes.\r\n- Si `APP_PASSWORD` n'est pas défini, l'app est publique. Pour une URL accessible depuis téléphone, il vaut mieux définir un mot de passe.\r\n- Les exports JSON/CSV sont écrits dans le disque temporaire du serveur. Sur Render gratuit, ne considère pas ces exports comme un stockage durable.\r\n\r\n## Tests\r\n\r\n```bash\r\npytest\r\n```\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/README.md b/README.md
+--- a/README.md	(revision e314e852783d8fc6d926d597b0611ed1047cedea)
++++ b/README.md	(date 1778163341111)
+@@ -1,14 +1,14 @@
+ # Meal Builder NiceGUI
+ 
+-Application Python/NiceGUI pour construire des repas simples en sèche / recomposition musculaire, sans transformer l'alimentation en tableur.
++Application locale en Python pour construire des repas simples en sèche / recomposition musculaire.
+ 
+-## Installation locale
++## Installation
+ 
+ ```bash
+ pip install -r requirements.txt
+ ```
+ 
+-## Lancement local
++## Lancement
+ 
+ ```bash
+ python app.py
+@@ -16,80 +16,20 @@
+ 
+ Puis ouvrir : http://localhost:8080
+ 
+-En local, aucun mot de passe n'est demandé par défaut. Pour tester le mode privé :
+-
+-```bash
+-APP_PASSWORD=ton_mot_de_passe python app.py
+-```
+-
+-Sous PowerShell :
+-
+-```powershell
+-$env:APP_PASSWORD="ton_mot_de_passe"
+-python app.py
+-```
+-
+-## Profils disponibles
+-
+-- **Liêm** : homme, 26 ans, 165 cm, 62 kg, objectif summer body / recomposition, marche par défaut 4 km.
+-- **Mathilde** : femme, 26 ans, 160 cm, 60 kg, objectif perte de gras + tonus bras/abdos/cuisses + fessiers musclés, vélo obligatoire par défaut 1h30, tupperwares maison uniquement.
+-
+-Le profil se choisit dans **Réglages du jour**. Les aliments, petits-déjeuners, goûters, sports et repères nutritionnels s'adaptent au profil.
+-
+ ## Ce que fait l'app
+ 
+ - Préparer, compléter ou faire le bilan d'une journée.
+ - Objectifs affichés comme zones utiles plutôt que chiffres rigides.
+ - Repas maison avec plusieurs ingrédients : protéines, féculents, huile/sauce ou aliment libre.
+-- Self d'entreprise avec estimations simples et ajout libre pour les profils concernés.
+-- Petit-déj et plusieurs goûters. Shaker et cafés au lait seulement pour les profils concernés.
+-- Shaker standard pour Liêm : 25 g whey + lait demi-écrémé, 250 ml par défaut.
+-- Déplacement par défaut modifiable : marche pour Liêm, vélo pour Mathilde.
+-- Sports additionnels multiples avec bouton **Ajouter un sport**.
++- Self d'entreprise avec estimations simples et ajout libre.
++- Petit-déj, goûter, shaker et cafés au lait.
++- Shaker standard : 25 g whey + lait demi-écrémé, 250 ml par défaut.
++- Sport en plus : courses prédéfinies, badminton, marche ou dépense personnalisée.
+ - Barres visuelles vert / jaune / rouge selon la cohérence avec la zone cible.
++- Profil affiché dans l’app : homme, 26 ans, 165 cm, 62 kg, objectif sèche/recomposition, métabolisme de base estimé.
+ - Quantité totale affichée pour les portions : exemple 1,5 × 75 g = environ 112,5 g.
+ - Export JSON ou CSV dans le dossier `exports/`.
+ 
+-## Déploiement gratuit sur Render
+-
+-Le repo contient déjà :
+-
+-```text
+-Dockerfile
+-render.yaml
+-```
+-
+-L'app écoute automatiquement le port fourni par Render via la variable `PORT`.
+-
+-### Étapes
+-
+-1. Pousse ce repo sur GitHub.
+-2. Va sur Render et crée un **New Web Service**.
+-3. Connecte ton repo `automatic-meal-analysis`.
+-4. Render devrait détecter `render.yaml`.
+-5. Dans les variables d'environnement, renseigne :
+-
+-```text
+-APP_PASSWORD=un_mot_de_passe_long
+-```
+-
+-`NICEGUI_STORAGE_SECRET` est généré automatiquement par `render.yaml` si Render l'accepte. Sinon, crée-la manuellement avec une valeur longue et aléatoire.
+-
+-Exemple :
+-
+-```text
+-NICEGUI_STORAGE_SECRET=change-moi-avec-une-longue-chaine-aleatoire
+-```
+-
+-6. Déploie.
+-7. Render donnera une URL publique, accessible depuis téléphone.
+-
+-### Notes importantes
+-
+-- Le plan gratuit peut mettre l'app en sommeil après inactivité. Le premier chargement peut donc prendre quelques dizaines de secondes.
+-- Si `APP_PASSWORD` n'est pas défini, l'app est publique. Pour une URL accessible depuis téléphone, il vaut mieux définir un mot de passe.
+-- Les exports JSON/CSV sont écrits dans le disque temporaire du serveur. Sur Render gratuit, ne considère pas ces exports comme un stockage durable.
+-
+ ## Tests
+ 
+ ```bash

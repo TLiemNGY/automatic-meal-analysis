@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -19,6 +20,10 @@ BASE_DIR = Path(__file__).resolve().parent
 EXPORT_DIR = BASE_DIR / 'exports'
 EXPORT_DIR.mkdir(exist_ok=True)
 app.add_static_files('/exports', str(EXPORT_DIR))
+
+APP_PASSWORD = os.environ.get('APP_PASSWORD', '').strip()
+NICEGUI_STORAGE_SECRET = os.environ.get('NICEGUI_STORAGE_SECRET', 'dev-secret-change-me')
+PORT = int(os.environ.get('PORT', '8080'))
 
 ui.add_head_html('''
 <style>
@@ -212,6 +217,34 @@ def current_target() -> Target:
     return Target(base.protein, base.carbs + extra.carbs, base.fat, base.kcal + extra.energy())
 
 
+def password_gate() -> bool:
+    """Return True when the current browser session may access the app.
+
+    Locally, no password is required unless APP_PASSWORD is defined.
+    On Render, set APP_PASSWORD in Environment to protect the public URL.
+    """
+    if not APP_PASSWORD:
+        return True
+    if app.storage.user.get('authenticated') is True:
+        return True
+
+    with ui.card().classes('card w-full').style('max-width:520px;margin:80px auto;'):
+        ui.label('Accès privé').classes('section-title')
+        ui.label('Entre le mot de passe configuré pour cette application.').classes('small')
+        password = ui.input('Mot de passe', password=True, password_toggle_button=True).classes('w-full mt-3')
+
+        def login() -> None:
+            if password.value == APP_PASSWORD:
+                app.storage.user['authenticated'] = True
+                ui.notify('Connexion réussie', color='positive')
+                refresh()
+            else:
+                ui.notify('Mot de passe incorrect', color='negative')
+
+        ui.button('Entrer', on_click=login).props('unelevated color=primary').classes('mt-3')
+    return False
+
+
 def page_shell(active: str, render):
     with ui.element('div').classes('app-shell'):
         with ui.element('aside').classes('sidebar'):
@@ -223,7 +256,8 @@ def page_shell(active: str, render):
             ui.label('1 portion protéine ≈ 30-35 g').classes('text-xs text-blue-200 mt-2')
             ui.label('1 portion féculent ≈ 50 g glucides').classes('text-xs text-blue-200 mt-1')
         with ui.element('main').classes('main'):
-            render()
+            if password_gate():
+                render()
 
 
 
@@ -491,4 +525,4 @@ def page_completer(): page_shell('Compléter', completer_content)
 @ui.page('/bilan')
 def page_bilan(): page_shell('Bilan', bilan_content)
 
-ui.run(title='Meal Builder', reload=False)
+ui.run(title='Meal Builder', host='0.0.0.0', port=PORT, reload=False, storage_secret=NICEGUI_STORAGE_SECRET)
