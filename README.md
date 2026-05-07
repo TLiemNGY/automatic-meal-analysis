@@ -1,33 +1,20 @@
 # Meal Builder NiceGUI
 
-Application Python/NiceGUI pour construire des repas simples en sèche / recomposition musculaire, sans transformer l'alimentation en tableur.
+Application locale en Python pour construire des repas simples en sèche / recomposition musculaire, sans transformer l'alimentation en tableur.
 
-## Installation locale
+## Installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Lancement local
+## Lancement
 
 ```bash
 python app.py
 ```
 
 Puis ouvrir : http://localhost:8080
-
-En local, aucun mot de passe n'est demandé par défaut. Pour tester le mode privé :
-
-```bash
-APP_PASSWORD=ton_mot_de_passe python app.py
-```
-
-Sous PowerShell :
-
-```powershell
-$env:APP_PASSWORD="ton_mot_de_passe"
-python app.py
-```
 
 ## Profils disponibles
 
@@ -49,46 +36,6 @@ Le profil se choisit dans **Réglages du jour**. Les aliments, petits-déjeuners
 - Barres visuelles vert / jaune / rouge selon la cohérence avec la zone cible.
 - Quantité totale affichée pour les portions : exemple 1,5 × 75 g = environ 112,5 g.
 - Export JSON ou CSV dans le dossier `exports/`.
-
-## Déploiement gratuit sur Render
-
-Le repo contient déjà :
-
-```text
-Dockerfile
-render.yaml
-```
-
-L'app écoute automatiquement le port fourni par Render via la variable `PORT`.
-
-### Étapes
-
-1. Pousse ce repo sur GitHub.
-2. Va sur Render et crée un **New Web Service**.
-3. Connecte ton repo `automatic-meal-analysis`.
-4. Render devrait détecter `render.yaml`.
-5. Dans les variables d'environnement, renseigne :
-
-```text
-APP_PASSWORD=un_mot_de_passe_long
-```
-
-`NICEGUI_STORAGE_SECRET` est généré automatiquement par `render.yaml` si Render l'accepte. Sinon, crée-la manuellement avec une valeur longue et aléatoire.
-
-Exemple :
-
-```text
-NICEGUI_STORAGE_SECRET=change-moi-avec-une-longue-chaine-aleatoire
-```
-
-6. Déploie.
-7. Render donnera une URL publique, accessible depuis téléphone.
-
-### Notes importantes
-
-- Le plan gratuit peut mettre l'app en sommeil après inactivité. Le premier chargement peut donc prendre quelques dizaines de secondes.
-- Si `APP_PASSWORD` n'est pas défini, l'app est publique. Pour une URL accessible depuis téléphone, il vaut mieux définir un mot de passe.
-- Les exports JSON/CSV sont écrits dans le disque temporaire du serveur. Sur Render gratuit, ne considère pas ces exports comme un stockage durable.
 
 ## Tests
 
