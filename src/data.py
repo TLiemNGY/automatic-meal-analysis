@@ -34,6 +34,7 @@ class Target:
 TARGETS: Dict[str, Target] = {
     'Repos': Target(130, 200, 55, 1815),
     'Muscu': Target(140, 260, 60, 2140),
+    'Muscu maison': Target(140, 250, 60, 2100),
     'Badminton 2h': Target(140, 330, 65, 2465),
 }
 
@@ -44,6 +45,7 @@ SPORT_EXTRAS: Dict[str, Macros] = {
     "Course 30 min à 5'30/km": Macros(carbs=35, kcal=235),
     "Course 45 min à 5'30/km": Macros(carbs=52, kcal=350),
     'Badminton en plus 1h': Macros(carbs=45, kcal=220),
+    'Muscu maison — tractions/pompes/abdos/bulgar squat': Macros(carbs=35, kcal=250),
     'Longue marche': Macros(carbs=25, kcal=120),
     'Autre sport': Macros(carbs=0, kcal=0),
 }
@@ -57,11 +59,13 @@ PROTEINS: Dict[str, Macros] = {
     'Steak haché 5 % — 125 g cru': Macros(27, 0, 6, 160),
     'Bavette — 150 g crue': Macros(31, 0, 9, 200),
     'Saumon — 150 g cru': Macros(30, 0, 17, 290),
-    'Saumon self — 125 g': Macros(25, 0, 14, 240),
     'Sardines égouttées — 100 g': Macros(25, 0, 11, 205),
+    'Poisson blanc — 150 g cru': Macros(30, 0, 2, 145),
+    'Côte de porc — 150 g cru': Macros(31, 0, 15, 260),
+    'Chipolatas Carrefour — 2 pièces / 160 g': Macros(22.5, 0, 40, 450),
     'Œuf — 1 unité': Macros(6.5, 0.5, 5, 72),
     'Steak haché 20 % — 125 g cru': Macros(21, 0, 25, 315),
-    'Lardons — 50 g': Macros(8, 0, 11, 130),
+    'Lardons — 100 g': Macros(16, 0, 22, 260),
 }
 
 CARBS: Dict[str, Macros] = {
@@ -116,6 +120,9 @@ MILKS_PER_100ML: Dict[str, Macros] = {
 SELF_PROTEINS: Dict[str, Macros] = {
     'Poulet — 1 portion self': Macros(35, 0, 3, 180),
     'Saumon — 125 g self': Macros(25, 0, 14, 240),
+    'Poisson blanc — 1 portion self': Macros(30, 0, 2, 145),
+    'Côte de porc — 1 portion self': Macros(31, 0, 15, 260),
+    'Chipolatas Carrefour — 2 pièces / 160 g self': Macros(22.5, 0, 40, 450),
     'Bavette — 1 portion self': Macros(31, 0, 9, 200),
     'Steak haché 20 % — 1 portion self': Macros(21, 0, 25, 315),
 }
@@ -192,7 +199,9 @@ MATHILDE_PROTEINS: Dict[str, Macros] = {
     'Thon au naturel — 120 g égoutté': Macros(29, 0, 1, 125),
     'Saumon — 150 g cru': Macros(30, 0, 17, 290),
     'Poisson blanc — 150 g cru': Macros(30, 0, 2, 145),
-    'Lardons — 50 g': Macros(8, 0, 11, 130),
+    'Côte de porc — 150 g cru': Macros(31, 0, 15, 260),
+    'Chipolatas Carrefour — 2 pièces / 160 g': Macros(22.5, 0, 40, 450),
+    'Lardons — 100 g': Macros(16, 0, 22, 260),
 }
 
 MATHILDE_CARBS: Dict[str, Macros] = CARBS
