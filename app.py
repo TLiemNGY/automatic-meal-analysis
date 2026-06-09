@@ -424,10 +424,17 @@ def meal_card(title: str):
         if not state['meals'][title]:
             ui.label('Exemple : filet de poulet + 2 œufs + riz. Les légumes maison restent libres par simplicité.').classes('small')
         for item in list(state['meals'][title]):
+            hint_label = None
+
+            def update_hint(it=item):
+                if hint_label is not None and it.get('kind') != 'Autre':
+                    hint_label.set_text(serving_hint(it.get('name', ''), float(it.get('qty') or 0)))
+
             with ui.row().classes('w-full items-end gap-3'):
                 def update_kind(e, it=item):
                     it['kind'] = e.value
-                    if e.value != 'Autre': it['name'] = ingredient_options(e.value)[1 if e.value != 'Huile / sauce' else 0]
+                    if e.value != 'Autre':
+                        it['name'] = ingredient_options(e.value)[1 if e.value != 'Huile / sauce' else 0]
                     dirty_refresh()
                 ui.select(['Protéine','Féculent','Huile / sauce','Autre'], value=item['kind'], label='Type').on_value_change(update_kind).classes('w-44')
                 if item['kind'] == 'Autre':
@@ -436,13 +443,11 @@ def meal_card(title: str):
                         ui.number(label=lab, value=item['custom'][key], min=0, step=1).on_value_change(lambda e, it=item, k=key: (it['custom'].update({k: float(e.value or 0)}), mark_dirty())).classes('w-28')
                     ui.number(label='Kcal', value=item['custom']['kcal'], min=0, step=10).on_value_change(lambda e, it=item: (it['custom'].update({'kcal': float(e.value or 0)}), mark_dirty())).classes('w-28')
                 else:
-                    ui.select(ingredient_options(item['kind']), value=item['name'], label='Ingrédient').on_value_change(lambda e, it=item: (it.update({'name': e.value}), mark_dirty())).classes('grow')
-                    ui.number(label='Portions', value=item['qty'], min=0, max=8, step=0.25, format='%.2f').on_value_change(lambda e, it=item: (it.update({'qty': float(e.value or 0)}), mark_dirty())).classes('w-32')
+                    ui.select(ingredient_options(item['kind']), value=item['name'], label='Ingrédient').on_value_change(lambda e, it=item: (it.update({'name': e.value}), mark_dirty(), update_hint(it))).classes('grow')
+                    ui.number(label='Portions', value=item['qty'], min=0, max=8, step=0.25, format='%.2f').on_value_change(lambda e, it=item: (it.update({'qty': float(e.value or 0)}), mark_dirty(), update_hint(it))).classes('w-32')
                 ui.button(icon='delete', on_click=lambda it=item: remove_ingredient(title, it['id'])).props('flat round color=negative')
             if item['kind'] != 'Autre':
-                hint = serving_hint(item['name'], float(item.get('qty') or 0))
-                if hint:
-                    ui.label(hint).classes('small -mt-2 mb-2')
+                hint_label = ui.label(serving_hint(item['name'], float(item.get('qty') or 0))).classes('small -mt-2 mb-2')
 
 
 def extras_card():
@@ -462,20 +467,34 @@ def extras_card():
         if not state['snacks']:
             ui.label('Exemple : bonbons crocodile + boîte de sushis antigaspi. Ajoute une ligne par goûter mangé.').classes('small mt-1')
         for row in list(state['snacks']):
+            hint_label = None
+
+            def update_snack_hint(r=row):
+                if hint_label is not None and r.get('name') != 'Autre goûter':
+                    hint_label.set_text(serving_hint(r.get('name', ''), float(r.get('qty') or 0)))
+
+            def update_snack_name(e, r=row):
+                was_other = r.get('name') == 'Autre goûter'
+                is_other = e.value == 'Autre goûter'
+                r.update({'name': e.value})
+                if was_other or is_other:
+                    dirty_refresh()
+                else:
+                    mark_dirty()
+                    update_snack_hint(r)
+
             with ui.row().classes('w-full items-end gap-3 mt-2'):
-                ui.select(list(snacks()), value=safe_choice(list(snacks()), row.get('name', 'Aucun')), label='Goûter').on_value_change(lambda e, r=row: (r.update({'name': e.value}), dirty_refresh())).classes('grow')
+                ui.select(list(snacks()), value=safe_choice(list(snacks()), row.get('name', 'Aucun')), label='Goûter').on_value_change(update_snack_name).classes('grow')
                 if row.get('name') == 'Autre goûter':
                     ui.input(label='Nom', value=row['custom']['name']).on_value_change(lambda e, r=row: (r['custom'].update({'name': e.value}), mark_dirty())).classes('w-52')
                     for key, lab in [('protein','Prot. g'),('carbs','Gluc. g'),('fat','Lip. g')]:
                         ui.number(label=lab, value=row['custom'][key], min=0, step=1).on_value_change(lambda e, r=row, k=key: (r['custom'].update({k: float(e.value or 0)}), mark_dirty())).classes('w-28')
                     ui.number(label='Kcal', value=row['custom']['kcal'], min=0, step=10).on_value_change(lambda e, r=row: (r['custom'].update({'kcal': float(e.value or 0)}), mark_dirty())).classes('w-28')
                 else:
-                    ui.number(label='Portions', value=row.get('qty', 1.0), min=0, max=8, step=0.25, format='%.2f').on_value_change(lambda e, r=row: (r.update({'qty': float(e.value or 0)}), mark_dirty())).classes('w-32')
+                    ui.number(label='Portions', value=row.get('qty', 1.0), min=0, max=8, step=0.25, format='%.2f').on_value_change(lambda e, r=row: (r.update({'qty': float(e.value or 0)}), mark_dirty(), update_snack_hint(r))).classes('w-32')
                 ui.button(icon='delete', on_click=lambda r=row: remove_snack(r['id'])).props('flat round color=negative')
             if row.get('name') != 'Autre goûter':
-                hint = serving_hint(row.get('name', ''), float(row.get('qty') or 0))
-                if hint:
-                    ui.label(hint).classes('small -mt-2 mb-2')
+                hint_label = ui.label(serving_hint(row.get('name', ''), float(row.get('qty') or 0))).classes('small -mt-2 mb-2')
         if uses_shaker():
             ui.separator().classes('my-4')
             if state['shaker']:
