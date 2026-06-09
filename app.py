@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import json
+import os
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -10,7 +12,7 @@ from nicegui import app, ui
 
 from src.data import (
     BREAKFASTS, CARBS, FATS, MILKS_PER_100ML, PROTEINS, SELF_PROTEINS, SELF_RICE,
-    SELF_SAUCE, SELF_VEG, SNACKS, SPORT_EXTRAS, TARGETS, Macros, Target,
+    SELF_SAUCE, SELF_VEG, SNACKS, SPORT_EXTRAS, TARGETS, PROFILES, Macros, Target,
 )
 from src.nutrition import add_macros, export_dict, scale_macros, status_for
 from src.recommendations import daily_comment, dinner_advice, tomorrow_suggestion, warnings
@@ -20,6 +22,10 @@ EXPORT_DIR = BASE_DIR / 'exports'
 EXPORT_DIR.mkdir(exist_ok=True)
 app.add_static_files('/exports', str(EXPORT_DIR))
 
+APP_PASSWORD = os.environ.get('APP_PASSWORD', '').strip()
+NICEGUI_STORAGE_SECRET = os.environ.get('NICEGUI_STORAGE_SECRET', 'dev-secret-change-me')
+PORT = int(os.environ.get('PORT', '8080'))
+
 ui.add_head_html('''
 <style>
 :root{--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--soft:#f8fafc;--blue:#2563eb;--green:#16a34a;--amber:#f59e0b;--red:#dc2626;--good:#dcfce7;--warn:#fef3c7;--bad:#fee2e2;}
@@ -27,22 +33,61 @@ body{background:#f5f7fb;color:var(--ink);font-family:Inter,ui-sans-serif,system-
 </style>
 ''', shared=True)
 
-PROFILE = {
-    'sex': 'Homme',
-    'age': 26,
-    'height_cm': 165,
-    'weight_kg': 62,
-    'goal': 'sèche / recomposition musculaire : abdos visibles + densité musculaire',
-}
-BMR_KCAL = round(10 * PROFILE['weight_kg'] + 6.25 * PROFILE['height_cm'] - 5 * PROFILE['age'] + 5)
+def profile_cfg() -> dict:
+    return PROFILES[state['profile']]
+
+
+def targets() -> dict[str, Target]:
+    return profile_cfg()['targets']
+
+
+def proteins() -> dict[str, Macros]:
+    return profile_cfg()['proteins']
+
+
+def carbs() -> dict[str, Macros]:
+    return profile_cfg()['carbs']
+
+
+def fats() -> dict[str, Macros]:
+    return profile_cfg()['fats']
+
+
+def breakfasts() -> dict[str, Macros]:
+    return profile_cfg()['breakfasts']
+
+
+def snacks() -> dict[str, Macros]:
+    return profile_cfg()['snacks']
+
+
+def sports_catalog() -> dict[str, Macros]:
+    return profile_cfg()['sports']
+
+
+def movement_cfg() -> dict:
+    return profile_cfg()['default_movement']
+
+
+def uses_self() -> bool:
+    return bool(profile_cfg().get('uses_self', True))
+
+
+def uses_shaker() -> bool:
+    return bool(profile_cfg().get('uses_shaker', True))
+
+
+def uses_coffee() -> bool:
+    return bool(profile_cfg().get('uses_coffee', True))
 
 
 def custom_state():
     return {'name': '', 'protein': 0.0, 'carbs': 0.0, 'fat': 0.0, 'kcal': 0.0}
 
 state = {
+    'profile': 'Liêm',
     'day': 'Muscu',
-    'walk_enabled': True, 'walk_km': 4.0,
+    'movement_active': True, 'movement_amount': 4.0,
     'sports': [],
     'self': False, 'self_protein': list(SELF_PROTEINS)[0], 'self_rice': list(SELF_RICE)[0], 'self_veg': list(SELF_VEG)[0], 'self_sauce': list(SELF_SAUCE)[0], 'self_custom': custom_state(),
     'breakfast': 'Aucun', 'breakfast_custom': custom_state(),
@@ -51,11 +96,59 @@ state = {
     'shaker': False, 'shaker_ml': 250, 'shaker_custom': custom_state(),
     'meals': {'Déjeuner': [], 'Dîner': []},
     'custom': custom_state(),
+    '_results_dirty': False,
 }
 
 
+
 def refresh(): ui.navigate.reload()
-def setv(key, value): state[key] = value; refresh()
+
+def snapshot_state() -> dict:
+    return deepcopy({k: v for k, v in state.items() if not k.startswith('_')})
+
+def dirty_refresh() -> None:
+    state['_results_dirty'] = True
+    refresh()
+
+def setv(key, value):
+    state[key] = value
+    dirty_refresh()
+
+def actualize_results() -> None:
+    global results_state
+    results_state = snapshot_state()
+    state['_results_dirty'] = False
+    refresh()
+
+def run_with_results_state(fn):
+    global state
+    current = state
+    state = deepcopy(results_state)
+    try:
+        return fn()
+    finally:
+        state = current
+
+results_state = snapshot_state()
+
+def set_profile(name: str):
+    state['profile'] = name
+    cfg = PROFILES[name]
+    state['day'] = cfg['default_day']
+    state['movement_active'] = True
+    state['movement_amount'] = cfg['default_movement']['default']
+    state['sports'] = []
+    state['breakfast'] = 'Aucun'
+    state['self'] = False
+    state['shaker'] = False
+    state['coffee_count'] = 0
+    state['snacks'] = []
+    for meal in state['meals'].values():
+        meal.clear()
+    dirty_refresh()
+
+def safe_choice(options: list[str], value: str) -> str:
+    return value if value in options else options[0]
 
 def custom_macros(d: dict) -> Macros:
     kcal = d.get('kcal') or None
@@ -65,20 +158,28 @@ def macro_from_select(source: dict[str, Macros], name: str, portions: float = 1.
     return scale_macros(source.get(name, Macros()), portions)
 
 def coffee_macros() -> Macros:
+    if not uses_coffee():
+        return Macros()
     return scale_macros(MILKS_PER_100ML['Lait demi-écrémé'], state['coffee_count'] * state['coffee_milk_ml'] / 100)
 
 def shaker_macros() -> Macros:
+    if not uses_shaker():
+        return Macros()
     if not state['shaker']: return custom_macros(state['shaker_custom'])
     whey = Macros(20, 2, 1.5, 100)
     milk = scale_macros(MILKS_PER_100ML['Lait demi-écrémé'], state['shaker_ml'] / 100)
     return add_macros([whey, milk, custom_macros(state['shaker_custom'])])
 
 def self_macros() -> Macros:
+    if not uses_self():
+        return Macros()
     if not state['self']: return custom_macros(state['self_custom'])
     return add_macros([SELF_PROTEINS[state['self_protein']], SELF_RICE[state['self_rice']], SELF_VEG[state['self_veg']], SELF_SAUCE[state['self_sauce']], custom_macros(state['self_custom'])])
 
 def breakfast_macros() -> Macros:
-    return add_macros([BREAKFASTS[state['breakfast']], custom_macros(state['breakfast_custom'])])
+    choice = safe_choice(list(breakfasts()), state['breakfast'])
+    state['breakfast'] = choice
+    return add_macros([breakfasts().get(choice, Macros()), custom_macros(state['breakfast_custom'])])
 
 def snack_macros() -> Macros:
     items: list[Macros] = []
@@ -86,34 +187,34 @@ def snack_macros() -> Macros:
         if row.get('name') == 'Autre goûter':
             items.append(custom_macros(row['custom']))
         else:
-            items.append(macro_from_select(SNACKS, row.get('name', 'Aucun'), row.get('qty', 1.0)))
+            items.append(macro_from_select(snacks(), row.get('name', 'Aucun'), row.get('qty', 1.0)))
     return add_macros(items)
 
 
 def add_snack():
-    default = 'Bonbons crocodile — 30 g' if 'Bonbons crocodile — 30 g' in SNACKS else [x for x in SNACKS if x != 'Aucun'][0]
+    default = 'Bonbons crocodile — 30 g' if 'Bonbons crocodile — 30 g' in snacks() else [x for x in snacks() if x != 'Aucun'][0]
     state['snacks'].append({'id': str(uuid4()), 'name': default, 'qty': 1.0, 'custom': custom_state()})
-    refresh()
+    dirty_refresh()
 
 
 def remove_snack(item_id: str):
     state['snacks'] = [x for x in state['snacks'] if x['id'] != item_id]
-    refresh()
+    dirty_refresh()
 
 def ingredient_options(kind: str):
-    return {'Protéine': list(PROTEINS), 'Féculent': list(CARBS), 'Huile / sauce': list(FATS)}[kind]
+    return {'Protéine': list(proteins()), 'Féculent': list(carbs()), 'Huile / sauce': list(fats())}[kind]
 
 def meal_macros(title: str) -> Macros:
     items: list[Macros] = []
     for row in state['meals'][title]:
-        if row['kind'] == 'Protéine': items.append(macro_from_select(PROTEINS, row['name'], row['qty']))
-        elif row['kind'] == 'Féculent': items.append(macro_from_select(CARBS, row['name'], row['qty']))
-        elif row['kind'] == 'Huile / sauce': items.append(macro_from_select(FATS, row['name'], row['qty']))
+        if row['kind'] == 'Protéine': items.append(macro_from_select(proteins(), row['name'], row['qty']))
+        elif row['kind'] == 'Féculent': items.append(macro_from_select(carbs(), row['name'], row['qty']))
+        elif row['kind'] == 'Huile / sauce': items.append(macro_from_select(fats(), row['name'], row['qty']))
         elif row['kind'] == 'Autre': items.append(custom_macros(row['custom']))
     return add_macros(items)
 
 def total_macros(include_custom: bool = False) -> Macros:
-    items = [breakfast_macros(), coffee_macros(), self_macros(), meal_macros('Déjeuner') if not state['self'] else Macros(), meal_macros('Dîner'), snack_macros(), shaker_macros()]
+    items = [breakfast_macros(), coffee_macros(), self_macros(), meal_macros('Déjeuner') if (not uses_self() or not state['self']) else Macros(), meal_macros('Dîner'), snack_macros(), shaker_macros()]
     if include_custom: items.append(custom_macros(state['custom']))
     return add_macros(items)
 
@@ -122,73 +223,86 @@ def sport_row_extra(row: dict) -> Macros:
     if name == 'Autre sport':
         kcal = float(row.get('kcal') or 0)
         return Macros(carbs=round(kcal / 7.0, 0), kcal=kcal)  # compensation simple, surtout en glucides
-    return SPORT_EXTRAS.get(name, Macros())
-
-
-WALK_BASELINE_KM = 4.0
-WALK_KCAL_PER_KM = 40.0
-
-
-def walking_adjustment() -> Macros:
-    # Les objectifs de base supposent déjà environ 4 km de marche dans une journée normale.
-    # On ajuste donc seulement l'écart par rapport à ce repère.
-    km = float(state['walk_km'] or 0) if state.get('walk_enabled', True) else 0.0
-    delta_km = km - WALK_BASELINE_KM
-    kcal = delta_km * WALK_KCAL_PER_KM
-    carbs = round(kcal / 7.0, 0)
-    return Macros(carbs=carbs, kcal=kcal)
+    return sports_catalog().get(name, Macros())
 
 
 def sports_extra() -> Macros:
     return add_macros([sport_row_extra(row) for row in state['sports']])
 
 
+def movement_extra() -> Macros:
+    cfg = movement_cfg()
+    actual = float(state['movement_amount'] or 0) if state.get('movement_active') else 0.0
+    diff = actual - float(cfg['default'])
+    kcal = diff * float(cfg['kcal_per_unit'])
+    return Macros(carbs=round(kcal / 7.0, 0), kcal=kcal)
+
+
 def current_target() -> Target:
-    base = TARGETS[state['day']]
-    extra = add_macros([sports_extra(), walking_adjustment()])
-    return Target(base.protein, max(0, base.carbs + extra.carbs), base.fat, max(0, base.kcal + extra.energy()))
+    day_options = targets()
+    if state['day'] not in day_options:
+        state['day'] = profile_cfg()['default_day']
+    base = day_options[state['day']]
+    extra = add_macros([sports_extra(), movement_extra()])
+    return Target(base.protein, base.carbs + extra.carbs, base.fat, base.kcal + extra.energy())
+
+
+def password_gate() -> bool:
+    """Return True when the current browser session may access the app.
+
+    Locally, no password is required unless APP_PASSWORD is defined.
+    On Render, set APP_PASSWORD in Environment to protect the public URL.
+    """
+    if not APP_PASSWORD:
+        return True
+    if app.storage.user.get('authenticated') is True:
+        return True
+
+    with ui.card().classes('card w-full').style('max-width:520px;margin:80px auto;'):
+        ui.label('Accès privé').classes('section-title')
+        ui.label('Entre le mot de passe configuré pour cette application.').classes('small')
+        password = ui.input('Mot de passe', password=True, password_toggle_button=True).classes('w-full mt-3')
+
+        def login() -> None:
+            if password.value == APP_PASSWORD:
+                app.storage.user['authenticated'] = True
+                ui.notify('Connexion réussie', color='positive')
+                refresh()
+            else:
+                ui.notify('Mot de passe incorrect', color='negative')
+
+        ui.button('Entrer', on_click=login).props('unelevated color=primary').classes('mt-3')
+    return False
 
 
 def page_shell(active: str, render):
     with ui.element('div').classes('app-shell'):
         with ui.element('aside').classes('sidebar'):
-            ui.html('<div class="brand">Meal Builder</div><div class="brand-sub">Sèche / recomposition, simple et propre.</div>')
-            for label, url in [('Préparer','/'),('Compléter','/completer'),('Bilan','/bilan')]:
-                ui.link(label, url).classes('nav-link nav-active' if label == active else 'nav-link')
+            ui.html('<div class="brand">Meal Builder</div><div class="brand-sub">Bilan repas / sport, actualisé à la demande.</div>')
+            ui.link('Bilan', '/').classes('nav-link nav-active')
             ui.separator().classes('my-5 opacity-30')
             ui.label('Repères rapides').classes('text-sm text-blue-100 font-bold')
             ui.label('1 portion protéine ≈ 30-35 g').classes('text-xs text-blue-200 mt-2')
             ui.label('1 portion féculent ≈ 50 g glucides').classes('text-xs text-blue-200 mt-1')
         with ui.element('main').classes('main'):
-            render()
+            if password_gate():
+                render()
 
 
 
 def profile_card():
+    cfg = profile_cfg()
+    mv = movement_cfg()
     with ui.card().classes('card w-full'):
         ui.label('Profil utilisé par l’app').classes('section-title')
         ui.html(f"""
-        <div style="display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:14px">
-          <div class="metric" style="padding:14px 16px">
-            <div class="metric-label">Profil</div>
-            <div style="font-size:16px;font-weight:500;color:#334155;margin-top:4px">{PROFILE['sex']}, {PROFILE['age']} ans</div>
-          </div>
-          <div class="metric" style="padding:14px 16px">
-            <div class="metric-label">Taille / poids</div>
-            <div style="font-size:16px;font-weight:500;color:#334155;margin-top:4px">{PROFILE['height_cm']} cm · {PROFILE['weight_kg']} kg</div>
-          </div>
-          <div class="metric" style="padding:14px 16px">
-            <div class="metric-label">Objectif</div>
-            <div style="font-size:16px;font-weight:500;color:#334155;margin-top:4px;line-height:1.25">Summer body · recomposition</div>
-          </div>
-          <div class="metric" style="padding:14px 16px">
-            <div class="metric-label">Métabolisme de base estimé</div>
-            <div style="font-size:16px;font-weight:500;color:#334155;margin-top:4px">≈ {BMR_KCAL} kcal/j</div>
-          </div>
+        <div class="box box-info" style="font-size:13px;line-height:1.55">
+          <span style="font-weight:650">{cfg['display_name']}</span> · {cfg['sex'].lower()}, {cfg['age']} ans · {cfg['height_cm']} cm · {cfg['weight_kg']} kg<br>
+          Objectif : {cfg['goal']}<br>
+          Métabolisme de base estimé : ≈ {cfg['bmr_kcal']} kcal/j. Déplacement par défaut : {mv['label'].lower()} {mv['default']:g} {mv['unit']}.
         </div>
-        <div class="small mt-3">Calcul du métabolisme de base : formule Mifflin-St Jeor. Ces infos servent juste de contexte ; les repères de repas restent la partie importante.</div>
+        <div class="small mt-2">Ces infos servent de contexte. Le poids varie naturellement : l’app suit surtout la cohérence des repas et des repères.</div>
         """)
-
 
 def serving_hint(name: str, qty: float) -> str:
     import re
@@ -216,19 +330,19 @@ def serving_hint(name: str, qty: float) -> str:
 
 def custom_inputs(data: dict, prefix: str):
     with ui.grid(columns=5).classes('w-full gap-3 mt-2'):
-        ui.input(label='Nom', value=data['name']).on_value_change(lambda e: (data.update({'name': e.value}), refresh()))
+        ui.input(label='Nom', value=data['name']).on_value_change(lambda e: (data.update({'name': e.value}), dirty_refresh()))
         for key, label in [('protein','Protéines g'),('carbs','Glucides g'),('fat','Lipides g'),('kcal','Kcal optionnelles')]:
-            ui.number(label=label, value=data[key], min=0, step=1).on_value_change(lambda e, k=key: (data.update({k: float(e.value or 0)}), refresh()))
+            ui.number(label=label, value=data[key], min=0, step=1).on_value_change(lambda e, k=key: (data.update({k: float(e.value or 0)}), dirty_refresh()))
 
 
 def add_sport():
-    state['sports'].append({'id': str(uuid4()), 'name': "Course 30 min à 6'/km", 'kcal': 250})
-    refresh()
+    state['sports'].append({'id': str(uuid4()), 'name': [x for x in sports_catalog() if x != 'Aucun'][0], 'kcal': 250})
+    dirty_refresh()
 
 
 def remove_sport(item_id: str):
     state['sports'] = [x for x in state['sports'] if x['id'] != item_id]
-    refresh()
+    dirty_refresh()
 
 
 def sports_controls():
@@ -239,12 +353,12 @@ def sports_controls():
     if not state['sports']:
         ui.label('Ajoute seulement les activités en plus de ta journée choisie. Exemple : une course le soir après une journée muscu.').classes('small mt-1')
         return
-    sport_options = [x for x in SPORT_EXTRAS if x != 'Aucun']
+    sport_options = [x for x in sports_catalog() if x != 'Aucun']
     for row in list(state['sports']):
         with ui.row().classes('w-full items-end gap-3 mt-2'):
-            ui.select(sport_options, value=row.get('name', sport_options[0]), label='Sport ajouté').on_value_change(lambda e, r=row: (r.update({'name': e.value}), refresh())).classes('grow')
+            ui.select(sport_options, value=row.get('name', sport_options[0]), label='Sport ajouté').on_value_change(lambda e, r=row: (r.update({'name': e.value}), dirty_refresh())).classes('grow')
             if row.get('name') == 'Autre sport':
-                ui.number(label='Dépense kcal', value=row.get('kcal', 250), min=0, max=2000, step=25).on_value_change(lambda e, r=row: (r.update({'kcal': float(e.value or 0)}), refresh())).classes('w-40')
+                ui.number(label='Dépense kcal', value=row.get('kcal', 250), min=0, max=2000, step=25).on_value_change(lambda e, r=row: (r.update({'kcal': float(e.value or 0)}), dirty_refresh())).classes('w-40')
             extra = sport_row_extra(row)
             ui.label(f'+{extra.energy():.0f} kcal · +{extra.carbs:.0f} g glucides').classes('small mb-3')
             ui.button(icon='delete', on_click=lambda r=row: remove_sport(r['id'])).props('flat round color=negative')
@@ -254,19 +368,25 @@ def common_controls():
     profile_card()
     with ui.card().classes('card w-full'):
         ui.label('Réglages du jour').classes('section-title')
-        with ui.grid(columns=4).classes('w-full gap-4'):
-            ui.select(list(TARGETS), value=state['day'], label='Type de journée').on_value_change(lambda e: setv('day', e.value)).classes('w-full')
-            ui.switch('Marche du jour', value=state.get('walk_enabled', True)).on_value_change(lambda e: setv('walk_enabled', e.value)).classes('mt-5')
-            ui.number(label='Distance marche en km', value=state.get('walk_km', 4.0), min=0, max=25, step=0.5, format='%.1f').on_value_change(lambda e: setv('walk_km', float(e.value or 0))).classes('w-full')
-            ui.number(label='Cafés au lait', value=state['coffee_count'], min=0, max=8, step=1).on_value_change(lambda e: setv('coffee_count', int(e.value or 0))).classes('w-full')
-        walk = walking_adjustment()
-        sign = '+' if walk.energy() >= 0 else ''
-        displayed_walk_km = float(state.get('walk_km') or 0) if state.get('walk_enabled', True) else 0.0
-        ui.label(f"Marche : 4 km est le repère de base. Aujourd’hui : {displayed_walk_km:g} km → {sign}{walk.energy():.0f} kcal et {sign}{walk.carbs:.0f} g glucides sur les repères.").classes('small mt-3')
-        ui.label(f"Café au lait : {state['coffee_milk_ml']} ml de lait demi-écrémé par café.").classes('small mt-1')
+        cfg = movement_cfg()
+        with ui.grid(columns=2).classes('w-full gap-4'):
+            ui.select(list(PROFILES), value=state['profile'], label='Profil').on_value_change(lambda e: set_profile(e.value)).classes('w-full')
+            ui.select(list(targets()), value=safe_choice(list(targets()), state['day']), label='Type de journée').on_value_change(lambda e: setv('day', e.value)).classes('w-full')
+            if uses_coffee():
+                ui.number(label='Cafés au lait', value=state['coffee_count'], min=0, max=8, step=1).on_value_change(lambda e: setv('coffee_count', int(e.value or 0))).classes('w-full')
+            ui.switch(f"{cfg['label']} par défaut", value=state.get('movement_active', True)).on_value_change(lambda e: setv('movement_active', e.value))
+        if state.get('movement_active', True):
+            ui.number(label=f"{cfg['label']} aujourd’hui ({cfg['unit']})", value=state.get('movement_amount', cfg['default']), min=0, max=30, step=0.25).on_value_change(lambda e: setv('movement_amount', float(e.value or 0))).classes('w-80 mt-3')
+            ui.label(f"Base du profil : {cfg['default']:g} {cfg['unit']}. Si tu changes cette valeur, les repères s’ajustent par rapport à cette base.").classes('small mt-2')
+        else:
+            ui.label(f"{cfg['label']} désactivé aujourd’hui : l’app retire l’équivalent de la base habituelle ({cfg['default']:g} {cfg['unit']}).").classes('small mt-2')
+        if uses_coffee():
+            ui.label(f"Café au lait : {state['coffee_milk_ml']} ml de lait demi-écrémé par café.").classes('small mt-3')
         sports_controls()
 
 def self_controls():
+    if not uses_self():
+        return
     with ui.card().classes('card w-full'):
         with ui.row().classes('items-center justify-between w-full'):
             ui.label('Self d’entreprise').classes('section-title')
@@ -283,12 +403,12 @@ def self_controls():
 
 
 def add_ingredient(meal: str):
-    state['meals'][meal].append({'id': str(uuid4()), 'kind': 'Protéine', 'name': list(PROTEINS)[1], 'qty': 1.0, 'custom': custom_state()})
-    refresh()
+    state['meals'][meal].append({'id': str(uuid4()), 'kind': 'Protéine', 'name': list(proteins())[1], 'qty': 1.0, 'custom': custom_state()})
+    dirty_refresh()
 
 def remove_ingredient(meal: str, item_id: str):
     state['meals'][meal] = [x for x in state['meals'][meal] if x['id'] != item_id]
-    refresh()
+    dirty_refresh()
 
 def meal_card(title: str):
     with ui.card().classes('card w-full'):
@@ -302,32 +422,31 @@ def meal_card(title: str):
                 def update_kind(e, it=item):
                     it['kind'] = e.value
                     if e.value != 'Autre': it['name'] = ingredient_options(e.value)[1 if e.value != 'Huile / sauce' else 0]
-                    refresh()
+                    dirty_refresh()
                 ui.select(['Protéine','Féculent','Huile / sauce','Autre'], value=item['kind'], label='Type').on_value_change(update_kind).classes('w-44')
                 if item['kind'] == 'Autre':
-                    ui.input(label='Nom', value=item['custom']['name']).on_value_change(lambda e, it=item: (it['custom'].update({'name': e.value}), refresh())).classes('w-52')
+                    ui.input(label='Nom', value=item['custom']['name']).on_value_change(lambda e, it=item: (it['custom'].update({'name': e.value}), dirty_refresh())).classes('w-52')
                     for key, lab in [('protein','Prot. g'),('carbs','Gluc. g'),('fat','Lip. g')]:
-                        ui.number(label=lab, value=item['custom'][key], min=0, step=1).on_value_change(lambda e, it=item, k=key: (it['custom'].update({k: float(e.value or 0)}), refresh())).classes('w-28')
-                    ui.number(label='Kcal', value=item['custom']['kcal'], min=0, step=10).on_value_change(lambda e, it=item: (it['custom'].update({'kcal': float(e.value or 0)}), refresh())).classes('w-28')
+                        ui.number(label=lab, value=item['custom'][key], min=0, step=1).on_value_change(lambda e, it=item, k=key: (it['custom'].update({k: float(e.value or 0)}), dirty_refresh())).classes('w-28')
+                    ui.number(label='Kcal', value=item['custom']['kcal'], min=0, step=10).on_value_change(lambda e, it=item: (it['custom'].update({'kcal': float(e.value or 0)}), dirty_refresh())).classes('w-28')
                 else:
-                    ui.select(ingredient_options(item['kind']), value=item['name'], label='Ingrédient').on_value_change(lambda e, it=item: (it.update({'name': e.value}), refresh())).classes('grow')
-                    ui.number(label='Portions', value=item['qty'], min=0, max=8, step=0.25, format='%.2f').on_value_change(lambda e, it=item: (it.update({'qty': float(e.value or 0)}), refresh())).classes('w-32')
+                    ui.select(ingredient_options(item['kind']), value=item['name'], label='Ingrédient').on_value_change(lambda e, it=item: (it.update({'name': e.value}), dirty_refresh())).classes('grow')
+                    ui.number(label='Portions', value=item['qty'], min=0, max=8, step=0.25, format='%.2f').on_value_change(lambda e, it=item: (it.update({'qty': float(e.value or 0)}), dirty_refresh())).classes('w-32')
                 ui.button(icon='delete', on_click=lambda it=item: remove_ingredient(title, it['id'])).props('flat round color=negative')
             if item['kind'] != 'Autre':
                 hint = serving_hint(item['name'], float(item.get('qty') or 0))
                 if hint:
                     ui.label(hint).classes('small -mt-2 mb-2')
-        m = meal_macros(title)
-        ui.label(f'Total {title.lower()} : {m.protein:g} g protéines · {m.carbs:g} g glucides · {m.fat:g} g lipides · {m.energy():.0f} kcal').classes('small mt-3')
 
 
 def extras_card():
     with ui.card().classes('card w-full'):
         ui.label('Petit-déj, goûters et shaker').classes('section-title')
         with ui.grid(columns=2).classes('w-full gap-4'):
-            ui.select(list(BREAKFASTS), value=state['breakfast'], label='Petit-déj').on_value_change(lambda e: setv('breakfast', e.value))
-            ui.switch('Shaker whey', value=state['shaker']).on_value_change(lambda e: setv('shaker', e.value))
-        if state['breakfast'] == 'Autre petit-déj':
+            ui.select(list(breakfasts()), value=safe_choice(list(breakfasts()), state['breakfast']), label='Petit-déj').on_value_change(lambda e: setv('breakfast', e.value))
+            if uses_shaker():
+                ui.switch('Shaker whey', value=state['shaker']).on_value_change(lambda e: setv('shaker', e.value))
+        if safe_choice(list(breakfasts()), state['breakfast']) == 'Autre petit-déj':
             ui.label('Détail autre petit-déj').classes('small mt-3'); custom_inputs(state['breakfast_custom'], 'breakfast_custom')
 
         ui.separator().classes('my-4')
@@ -338,29 +457,27 @@ def extras_card():
             ui.label('Exemple : bonbons crocodile + boîte de sushis antigaspi. Ajoute une ligne par goûter mangé.').classes('small mt-1')
         for row in list(state['snacks']):
             with ui.row().classes('w-full items-end gap-3 mt-2'):
-                ui.select(list(SNACKS), value=row.get('name', 'Aucun'), label='Goûter').on_value_change(lambda e, r=row: (r.update({'name': e.value}), refresh())).classes('grow')
+                ui.select(list(snacks()), value=safe_choice(list(snacks()), row.get('name', 'Aucun')), label='Goûter').on_value_change(lambda e, r=row: (r.update({'name': e.value}), dirty_refresh())).classes('grow')
                 if row.get('name') == 'Autre goûter':
-                    ui.input(label='Nom', value=row['custom']['name']).on_value_change(lambda e, r=row: (r['custom'].update({'name': e.value}), refresh())).classes('w-52')
+                    ui.input(label='Nom', value=row['custom']['name']).on_value_change(lambda e, r=row: (r['custom'].update({'name': e.value}), dirty_refresh())).classes('w-52')
                     for key, lab in [('protein','Prot. g'),('carbs','Gluc. g'),('fat','Lip. g')]:
-                        ui.number(label=lab, value=row['custom'][key], min=0, step=1).on_value_change(lambda e, r=row, k=key: (r['custom'].update({k: float(e.value or 0)}), refresh())).classes('w-28')
-                    ui.number(label='Kcal', value=row['custom']['kcal'], min=0, step=10).on_value_change(lambda e, r=row: (r['custom'].update({'kcal': float(e.value or 0)}), refresh())).classes('w-28')
+                        ui.number(label=lab, value=row['custom'][key], min=0, step=1).on_value_change(lambda e, r=row, k=key: (r['custom'].update({k: float(e.value or 0)}), dirty_refresh())).classes('w-28')
+                    ui.number(label='Kcal', value=row['custom']['kcal'], min=0, step=10).on_value_change(lambda e, r=row: (r['custom'].update({'kcal': float(e.value or 0)}), dirty_refresh())).classes('w-28')
                 else:
-                    ui.number(label='Portions', value=row.get('qty', 1.0), min=0, max=8, step=0.25, format='%.2f').on_value_change(lambda e, r=row: (r.update({'qty': float(e.value or 0)}), refresh())).classes('w-32')
+                    ui.number(label='Portions', value=row.get('qty', 1.0), min=0, max=8, step=0.25, format='%.2f').on_value_change(lambda e, r=row: (r.update({'qty': float(e.value or 0)}), dirty_refresh())).classes('w-32')
                 ui.button(icon='delete', on_click=lambda r=row: remove_snack(r['id'])).props('flat round color=negative')
             if row.get('name') != 'Autre goûter':
                 hint = serving_hint(row.get('name', ''), float(row.get('qty') or 0))
                 if hint:
                     ui.label(hint).classes('small -mt-2 mb-2')
-        sm = snack_macros()
-        if state['snacks']:
-            ui.label(f'Total goûters : {sm.protein:g} g protéines · {sm.carbs:g} g glucides · {sm.fat:g} g lipides · {sm.energy():.0f} kcal').classes('small mt-2')
+        if uses_shaker():
+            ui.separator().classes('my-4')
+            if state['shaker']:
+                ui.number(label='Lait demi-écrémé dans le shaker en ml', value=state['shaker_ml'], min=0, max=600, step=50).on_value_change(lambda e: setv('shaker_ml', int(e.value or 0))).classes('w-80 mt-3')
+                ui.label('Shaker par défaut : 25 g whey + 250 ml lait demi-écrémé. Pas d’autre liquide pour garder la routine stable.').classes('small mt-2')
+            ui.label('Autre chose autour du shaker').classes('small mt-3')
+            custom_inputs(state['shaker_custom'], 'shaker_custom')
 
-        ui.separator().classes('my-4')
-        if state['shaker']:
-            ui.number(label='Lait demi-écrémé dans le shaker en ml', value=state['shaker_ml'], min=0, max=600, step=50).on_value_change(lambda e: setv('shaker_ml', int(e.value or 0))).classes('w-80 mt-3')
-            ui.label('Shaker par défaut : 25 g whey + 250 ml lait demi-écrémé. Pas d’autre liquide pour garder la routine stable.').classes('small mt-2')
-        ui.label('Autre chose autour du shaker').classes('small mt-3')
-        custom_inputs(state['shaker_custom'], 'shaker_custom')
 
 def status_label(st: str) -> str:
     return {'ok':'Dans la zone','warn':'À surveiller','bad':'Hors zone'}[st]
@@ -378,12 +495,16 @@ def range_bar(label: str, value: float, center: float, low: float, high: float, 
     </div>''')
 
 
-def dashboard(total: Macros, target: Target):
+def dashboard(total: Macros, target: Target, context_state: dict | None = None):
     ranges = target.ranges()
     statuses = [status_for(total.protein,*ranges['protein']), status_for(total.carbs,*ranges['carbs']), status_for(total.fat,*ranges['fat']), status_for(total.energy(),*ranges['kcal'])]
     overall = 'ok' if all(s == 'ok' for s in statuses) else 'warn' if all(s != 'bad' for s in statuses) else 'bad'
     with ui.card().classes('card w-full'):
-        ui.label('Total estimé').classes('section-title')
+        with ui.row().classes('items-center justify-between w-full'):
+            ui.label('Résultats').classes('section-title')
+            ui.button('Actualiser les données', icon='refresh', on_click=actualize_results).props('unelevated color=primary')
+        if state.get('_results_dirty'):
+            ui.html('<div class="box box-warn"><b>Résultats non actualisés avec les données que vous venez d’entrer.</b><br>Clique sur “Actualiser les données” pour recalculer tous les résultats d’un coup.</div>')
         ui.html(f'''<div class="metric-grid"><div class="metric"><div class="metric-label">Protéines</div><div class="metric-value">{total.protein:.0f} g</div></div><div class="metric"><div class="metric-label">Glucides</div><div class="metric-value">{total.carbs:.0f} g</div></div><div class="metric"><div class="metric-label">Lipides</div><div class="metric-value">{total.fat:.0f} g</div></div><div class="metric"><div class="metric-label">Énergie</div><div class="metric-value">{total.energy():.0f} kcal</div></div></div>''')
         range_bar('Protéines', total.protein, target.protein, *ranges['protein'], 'g')
         range_bar('Glucides', total.carbs, target.carbs, *ranges['carbs'], 'g')
@@ -392,27 +513,25 @@ def dashboard(total: Macros, target: Target):
         box = {'ok':'box-ok','warn':'box-warn','bad':'box-bad'}[overall]
         title = {'ok':'✅ Journée bien calée','warn':'🟡 Journée récupérable','bad':'🔴 Il manque un vrai ajustement'}[overall]
         ui.html(f'<div class="box {box}"><b>{title}</b><br>{dinner_advice(total, target)}</div>')
-        ctx = ' '.join([state['self_protein'], state['self_veg'], state['self_sauce']]) if state['self'] else ''
+        src = context_state or state
+        ctx = ' '.join([src['self_protein'], src['self_veg'], src['self_sauce']]) if src.get('self') else ''
         for w in warnings(total, target, ctx): ui.html(f'<div class="box box-warn">{w}</div>')
 
 
 def prepare_content():
-    ui.html('<div class="hero"><h1 class="h1">Préparer sa journée</h1><div class="subtitle">Planifie tes repas sans tracker compliqué. Les chiffres restent des ordres de grandeur utiles.</div></div>')
-    common_controls(); self_controls(); extras_card()
-    if not state['self']: meal_card('Déjeuner')
-    meal_card('Dîner'); dashboard(total_macros(), current_target())
+    bilan_content()
 
 def completer_content():
-    ui.html('<div class="hero"><h1 class="h1">Compléter sa journée</h1><div class="subtitle">Entre ce qui est déjà mangé, puis ajuste le dîner.</div></div>')
-    common_controls(); self_controls(); extras_card(); meal_card('Dîner'); dashboard(total_macros(), current_target())
-    ui.html('<div class="box box-info"><b>Si faim :</b> ajoute 0,5 portion de féculent ou une banane.<br><b>Version sèche plus agressive :</b> garde protéines/légumes, réduis surtout les glucides hors sport.</div>')
+    bilan_content()
 
 def bilan_content():
-    ui.html('<div class="hero"><h1 class="h1">Bilan de journée</h1><div class="subtitle">Regarde si la journée est cohérente, puis exporte si besoin.</div></div>')
+    ui.html('<div class="hero"><h1 class="h1">Bilan de journée</h1><div class="subtitle">Entre tes données, puis clique sur “Actualiser les données” pour recalculer les résultats quand tu as terminé tes modifications.</div></div>')
     common_controls(); self_controls(); extras_card(); meal_card('Déjeuner'); meal_card('Dîner')
     with ui.card().classes('card w-full'):
         ui.label('Autre aliment de la journée').classes('section-title'); custom_inputs(state['custom'], 'custom')
-    total = total_macros(include_custom=True); target = current_target(); dashboard(total, target)
+    total = run_with_results_state(lambda: total_macros(include_custom=True))
+    target = run_with_results_state(current_target)
+    dashboard(total, target, results_state)
     ui.html(f'<div class="box box-info"><b>Commentaire :</b> {daily_comment(total, target)}<br><b>Suggestion demain :</b> {tomorrow_suggestion(total, target)}</div>')
     with ui.row().classes('mt-4'):
         def export_json():
@@ -425,10 +544,8 @@ def bilan_content():
         ui.button('Exporter JSON', on_click=export_json).props('unelevated color=primary'); ui.button('Exporter CSV', on_click=export_csv).props('outline color=primary')
 
 @ui.page('/')
-def page_prepare(): page_shell('Préparer', prepare_content)
-@ui.page('/completer')
-def page_completer(): page_shell('Compléter', completer_content)
+def page_home(): page_shell('Bilan', bilan_content)
 @ui.page('/bilan')
 def page_bilan(): page_shell('Bilan', bilan_content)
 
-ui.run(title='Meal Builder', reload=False)
+ui.run(title='Meal Builder', host='0.0.0.0', port=PORT, reload=False, storage_secret=NICEGUI_STORAGE_SECRET)
