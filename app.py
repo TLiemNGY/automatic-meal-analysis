@@ -103,16 +103,22 @@ state = {
 
 def refresh(): ui.navigate.reload()
 
+def mark_dirty() -> None:
+    state['_results_dirty'] = True
+
 def snapshot_state() -> dict:
     return deepcopy({k: v for k, v in state.items() if not k.startswith('_')})
 
 def dirty_refresh() -> None:
-    state['_results_dirty'] = True
+    mark_dirty()
     refresh()
 
-def setv(key, value):
+def setv(key, value, *, redraw: bool = False):
     state[key] = value
-    dirty_refresh()
+    if redraw:
+        dirty_refresh()
+    else:
+        mark_dirty()
 
 def actualize_results() -> None:
     global results_state
@@ -330,9 +336,9 @@ def serving_hint(name: str, qty: float) -> str:
 
 def custom_inputs(data: dict, prefix: str):
     with ui.grid(columns=5).classes('w-full gap-3 mt-2'):
-        ui.input(label='Nom', value=data['name']).on_value_change(lambda e: (data.update({'name': e.value}), dirty_refresh()))
+        ui.input(label='Nom', value=data['name']).on_value_change(lambda e: (data.update({'name': e.value}), mark_dirty()))
         for key, label in [('protein','Protéines g'),('carbs','Glucides g'),('fat','Lipides g'),('kcal','Kcal optionnelles')]:
-            ui.number(label=label, value=data[key], min=0, step=1).on_value_change(lambda e, k=key: (data.update({k: float(e.value or 0)}), dirty_refresh()))
+            ui.number(label=label, value=data[key], min=0, step=1).on_value_change(lambda e, k=key: (data.update({k: float(e.value or 0)}), mark_dirty()))
 
 
 def add_sport():
@@ -358,7 +364,7 @@ def sports_controls():
         with ui.row().classes('w-full items-end gap-3 mt-2'):
             ui.select(sport_options, value=row.get('name', sport_options[0]), label='Sport ajouté').on_value_change(lambda e, r=row: (r.update({'name': e.value}), dirty_refresh())).classes('grow')
             if row.get('name') == 'Autre sport':
-                ui.number(label='Dépense kcal', value=row.get('kcal', 250), min=0, max=2000, step=25).on_value_change(lambda e, r=row: (r.update({'kcal': float(e.value or 0)}), dirty_refresh())).classes('w-40')
+                ui.number(label='Dépense kcal', value=row.get('kcal', 250), min=0, max=2000, step=25).on_value_change(lambda e, r=row: (r.update({'kcal': float(e.value or 0)}), mark_dirty())).classes('w-40')
             extra = sport_row_extra(row)
             ui.label(f'+{extra.energy():.0f} kcal · +{extra.carbs:.0f} g glucides').classes('small mb-3')
             ui.button(icon='delete', on_click=lambda r=row: remove_sport(r['id'])).props('flat round color=negative')
@@ -374,7 +380,7 @@ def common_controls():
             ui.select(list(targets()), value=safe_choice(list(targets()), state['day']), label='Type de journée').on_value_change(lambda e: setv('day', e.value)).classes('w-full')
             if uses_coffee():
                 ui.number(label='Cafés au lait', value=state['coffee_count'], min=0, max=8, step=1).on_value_change(lambda e: setv('coffee_count', int(e.value or 0))).classes('w-full')
-            ui.switch(f"{cfg['label']} par défaut", value=state.get('movement_active', True)).on_value_change(lambda e: setv('movement_active', e.value))
+            ui.switch(f"{cfg['label']} par défaut", value=state.get('movement_active', True)).on_value_change(lambda e: setv('movement_active', e.value, redraw=True))
         if state.get('movement_active', True):
             ui.number(label=f"{cfg['label']} aujourd’hui ({cfg['unit']})", value=state.get('movement_amount', cfg['default']), min=0, max=30, step=0.25).on_value_change(lambda e: setv('movement_amount', float(e.value or 0))).classes('w-80 mt-3')
             ui.label(f"Base du profil : {cfg['default']:g} {cfg['unit']}. Si tu changes cette valeur, les repères s’ajustent par rapport à cette base.").classes('small mt-2')
@@ -390,7 +396,7 @@ def self_controls():
     with ui.card().classes('card w-full'):
         with ui.row().classes('items-center justify-between w-full'):
             ui.label('Self d’entreprise').classes('section-title')
-            ui.switch('Je mange au self', value=state['self']).on_value_change(lambda e: setv('self', e.value))
+            ui.switch('Je mange au self', value=state['self']).on_value_change(lambda e: setv('self', e.value, redraw=True))
         if state['self']:
             with ui.grid(columns=4).classes('w-full gap-4'):
                 ui.select(list(SELF_PROTEINS), value=state['self_protein'], label='Protéine').on_value_change(lambda e: setv('self_protein', e.value))
@@ -425,13 +431,13 @@ def meal_card(title: str):
                     dirty_refresh()
                 ui.select(['Protéine','Féculent','Huile / sauce','Autre'], value=item['kind'], label='Type').on_value_change(update_kind).classes('w-44')
                 if item['kind'] == 'Autre':
-                    ui.input(label='Nom', value=item['custom']['name']).on_value_change(lambda e, it=item: (it['custom'].update({'name': e.value}), dirty_refresh())).classes('w-52')
+                    ui.input(label='Nom', value=item['custom']['name']).on_value_change(lambda e, it=item: (it['custom'].update({'name': e.value}), mark_dirty())).classes('w-52')
                     for key, lab in [('protein','Prot. g'),('carbs','Gluc. g'),('fat','Lip. g')]:
-                        ui.number(label=lab, value=item['custom'][key], min=0, step=1).on_value_change(lambda e, it=item, k=key: (it['custom'].update({k: float(e.value or 0)}), dirty_refresh())).classes('w-28')
-                    ui.number(label='Kcal', value=item['custom']['kcal'], min=0, step=10).on_value_change(lambda e, it=item: (it['custom'].update({'kcal': float(e.value or 0)}), dirty_refresh())).classes('w-28')
+                        ui.number(label=lab, value=item['custom'][key], min=0, step=1).on_value_change(lambda e, it=item, k=key: (it['custom'].update({k: float(e.value or 0)}), mark_dirty())).classes('w-28')
+                    ui.number(label='Kcal', value=item['custom']['kcal'], min=0, step=10).on_value_change(lambda e, it=item: (it['custom'].update({'kcal': float(e.value or 0)}), mark_dirty())).classes('w-28')
                 else:
-                    ui.select(ingredient_options(item['kind']), value=item['name'], label='Ingrédient').on_value_change(lambda e, it=item: (it.update({'name': e.value}), dirty_refresh())).classes('grow')
-                    ui.number(label='Portions', value=item['qty'], min=0, max=8, step=0.25, format='%.2f').on_value_change(lambda e, it=item: (it.update({'qty': float(e.value or 0)}), dirty_refresh())).classes('w-32')
+                    ui.select(ingredient_options(item['kind']), value=item['name'], label='Ingrédient').on_value_change(lambda e, it=item: (it.update({'name': e.value}), mark_dirty())).classes('grow')
+                    ui.number(label='Portions', value=item['qty'], min=0, max=8, step=0.25, format='%.2f').on_value_change(lambda e, it=item: (it.update({'qty': float(e.value or 0)}), mark_dirty())).classes('w-32')
                 ui.button(icon='delete', on_click=lambda it=item: remove_ingredient(title, it['id'])).props('flat round color=negative')
             if item['kind'] != 'Autre':
                 hint = serving_hint(item['name'], float(item.get('qty') or 0))
@@ -443,9 +449,9 @@ def extras_card():
     with ui.card().classes('card w-full'):
         ui.label('Petit-déj, goûters et shaker').classes('section-title')
         with ui.grid(columns=2).classes('w-full gap-4'):
-            ui.select(list(breakfasts()), value=safe_choice(list(breakfasts()), state['breakfast']), label='Petit-déj').on_value_change(lambda e: setv('breakfast', e.value))
+            ui.select(list(breakfasts()), value=safe_choice(list(breakfasts()), state['breakfast']), label='Petit-déj').on_value_change(lambda e: setv('breakfast', e.value, redraw=True))
             if uses_shaker():
-                ui.switch('Shaker whey', value=state['shaker']).on_value_change(lambda e: setv('shaker', e.value))
+                ui.switch('Shaker whey', value=state['shaker']).on_value_change(lambda e: setv('shaker', e.value, redraw=True))
         if safe_choice(list(breakfasts()), state['breakfast']) == 'Autre petit-déj':
             ui.label('Détail autre petit-déj').classes('small mt-3'); custom_inputs(state['breakfast_custom'], 'breakfast_custom')
 
@@ -459,12 +465,12 @@ def extras_card():
             with ui.row().classes('w-full items-end gap-3 mt-2'):
                 ui.select(list(snacks()), value=safe_choice(list(snacks()), row.get('name', 'Aucun')), label='Goûter').on_value_change(lambda e, r=row: (r.update({'name': e.value}), dirty_refresh())).classes('grow')
                 if row.get('name') == 'Autre goûter':
-                    ui.input(label='Nom', value=row['custom']['name']).on_value_change(lambda e, r=row: (r['custom'].update({'name': e.value}), dirty_refresh())).classes('w-52')
+                    ui.input(label='Nom', value=row['custom']['name']).on_value_change(lambda e, r=row: (r['custom'].update({'name': e.value}), mark_dirty())).classes('w-52')
                     for key, lab in [('protein','Prot. g'),('carbs','Gluc. g'),('fat','Lip. g')]:
-                        ui.number(label=lab, value=row['custom'][key], min=0, step=1).on_value_change(lambda e, r=row, k=key: (r['custom'].update({k: float(e.value or 0)}), dirty_refresh())).classes('w-28')
-                    ui.number(label='Kcal', value=row['custom']['kcal'], min=0, step=10).on_value_change(lambda e, r=row: (r['custom'].update({'kcal': float(e.value or 0)}), dirty_refresh())).classes('w-28')
+                        ui.number(label=lab, value=row['custom'][key], min=0, step=1).on_value_change(lambda e, r=row, k=key: (r['custom'].update({k: float(e.value or 0)}), mark_dirty())).classes('w-28')
+                    ui.number(label='Kcal', value=row['custom']['kcal'], min=0, step=10).on_value_change(lambda e, r=row: (r['custom'].update({'kcal': float(e.value or 0)}), mark_dirty())).classes('w-28')
                 else:
-                    ui.number(label='Portions', value=row.get('qty', 1.0), min=0, max=8, step=0.25, format='%.2f').on_value_change(lambda e, r=row: (r.update({'qty': float(e.value or 0)}), dirty_refresh())).classes('w-32')
+                    ui.number(label='Portions', value=row.get('qty', 1.0), min=0, max=8, step=0.25, format='%.2f').on_value_change(lambda e, r=row: (r.update({'qty': float(e.value or 0)}), mark_dirty())).classes('w-32')
                 ui.button(icon='delete', on_click=lambda r=row: remove_snack(r['id'])).props('flat round color=negative')
             if row.get('name') != 'Autre goûter':
                 hint = serving_hint(row.get('name', ''), float(row.get('qty') or 0))
@@ -502,9 +508,9 @@ def dashboard(total: Macros, target: Target, context_state: dict | None = None):
     with ui.card().classes('card w-full'):
         with ui.row().classes('items-center justify-between w-full'):
             ui.label('Résultats').classes('section-title')
-            ui.button('Actualiser les données', icon='refresh', on_click=actualize_results).props('unelevated color=primary')
+            ui.button('Actualiser le bilan', icon='refresh', on_click=actualize_results).props('unelevated color=primary')
         if state.get('_results_dirty'):
-            ui.html('<div class="box box-warn"><b>Résultats non actualisés avec les données que vous venez d’entrer.</b><br>Clique sur “Actualiser les données” pour recalculer tous les résultats d’un coup.</div>')
+            ui.html('<div class="box box-warn"><b>Résultats non actualisés avec les données que vous venez d’entrer.</b><br>Clique sur “Actualiser le bilan” pour recalculer tous les résultats d’un coup.</div>')
         ui.html(f'''<div class="metric-grid"><div class="metric"><div class="metric-label">Protéines</div><div class="metric-value">{total.protein:.0f} g</div></div><div class="metric"><div class="metric-label">Glucides</div><div class="metric-value">{total.carbs:.0f} g</div></div><div class="metric"><div class="metric-label">Lipides</div><div class="metric-value">{total.fat:.0f} g</div></div><div class="metric"><div class="metric-label">Énergie</div><div class="metric-value">{total.energy():.0f} kcal</div></div></div>''')
         range_bar('Protéines', total.protein, target.protein, *ranges['protein'], 'g')
         range_bar('Glucides', total.carbs, target.carbs, *ranges['carbs'], 'g')
@@ -525,7 +531,7 @@ def completer_content():
     bilan_content()
 
 def bilan_content():
-    ui.html('<div class="hero"><h1 class="h1">Bilan de journée</h1><div class="subtitle">Entre tes données, puis clique sur “Actualiser les données” pour recalculer les résultats quand tu as terminé tes modifications.</div></div>')
+    ui.html('<div class="hero"><h1 class="h1">Bilan de journée</h1><div class="subtitle">Entre tes données, puis clique sur “Actualiser le bilan” pour recalculer les résultats quand tu as terminé tes modifications.</div></div>')
     common_controls(); self_controls(); extras_card(); meal_card('Déjeuner'); meal_card('Dîner')
     with ui.card().classes('card w-full'):
         ui.label('Autre aliment de la journée').classes('section-title'); custom_inputs(state['custom'], 'custom')
